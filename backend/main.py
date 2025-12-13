@@ -13,23 +13,9 @@ Also provides Admin API for manual override management (ADVERIFY-UI-1 S-2.1.3).
 
 import logging
 import time
-import os
-import base64
-import tempfile
 from datetime import datetime
 from typing import List, Optional
 from contextlib import asynccontextmanager
-
-# Railway/Cloud deployment: Decode base64-encoded GCP credentials
-if os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON'):
-    try:
-        creds_json = base64.b64decode(os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'])
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.json', delete=False) as f:
-            f.write(creds_json)
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = f.name
-            print(f"✅ GCP credentials loaded from environment variable")
-    except Exception as e:
-        print(f"⚠️ Failed to decode GCP credentials: {e}")
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.middleware.cors import CORSMiddleware

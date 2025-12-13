@@ -41,17 +41,12 @@ class JobQueue:
     @property
     def client(self) -> redis.Redis:
         if self._client is None:
-            redis_config = self.settings.get_redis_config()
             self._client = redis.Redis(
-                host=redis_config["host"],
-                port=redis_config["port"],
-                password=redis_config["password"],
-                db=redis_config["db"],
-                decode_responses=True,
-                socket_timeout=5,
-                socket_connect_timeout=5
+                host=self.settings.redis_host,
+                port=self.settings.redis_port,
+                decode_responses=True
             )
-            logger.info(f"Initialized job queue Redis client: {redis_config['host']}:{redis_config['port']}")
+            logger.info(f"Initialized job queue Redis client: {self.settings.redis_host}")
         return self._client
     
     def create_job(self, audio_url: str, audio_id: Optional[str] = None) -> str:

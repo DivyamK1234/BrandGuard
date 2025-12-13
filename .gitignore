@@ -162,3 +162,4 @@ logs/
 *.m4a
 *.flac
 !tests/fixtures/*.mp3
+brandguard-481014-b6b02cb2d900.json

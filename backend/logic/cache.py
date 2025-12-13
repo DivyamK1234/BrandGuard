@@ -39,23 +39,22 @@ def get_redis_client() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
         settings = get_settings()
-        redis_config = settings.get_redis_config()
         
         # Configure connection pool for optimal performance
         pool = redis.ConnectionPool(
-            host=redis_config["host"],
-            port=redis_config["port"],
-            password=redis_config["password"],
-            db=redis_config["db"],
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password,
+            db=settings.redis_db,
             decode_responses=True,
             max_connections=50,
-            socket_timeout=5,  # 5s timeout for cloud connections
-            socket_connect_timeout=5,
+            socket_timeout=0.1,  # 100ms timeout for fast fail
+            socket_connect_timeout=0.1,
             retry_on_timeout=True
         )
         
         _redis_client = redis.Redis(connection_pool=pool)
-        logger.info(f"Initialized Redis client: {redis_config['host']}:{redis_config['port']}")
+        logger.info(f"Initialized Redis client: {settings.redis_host}:{settings.redis_port}")
     
     return _redis_client
 
