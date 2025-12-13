@@ -1,0 +1,120 @@
+# BrandGuard - Local Development Environment
+# 
+# Use this file to run the full stack locally:
+#   docker-compose up -d
+#
+# Services:
+# - Backend: http://localhost:8000
+# - Frontend: http://localhost:3000
+# - Redis: localhost:6379
+#
+# Note: GCP services (Firestore, GCS, Speech-to-Text, Vertex AI) require
+# authentication via GOOGLE_APPLICATION_CREDENTIALS or ADC.
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Redis Cache
+  # Reference: ADVERIFY-BE-1 - In-memory cache for ultra-low latency lookups
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: brandguard-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - brandguard-network
+
+  # ===========================================================================
+  # Backend API
+  # Reference: ADVERIFY-AI-1 - AI Classification Endpoint
+  # ===========================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: brandguard-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Application
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      
+      # Redis (ADVERIFY-BE-1)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_TTL_SECONDS=86400
+      
+      # GCP Settings
+      - GOOGLE_CLOUD_PROJECT=brandguard-481014
+      - GCS_BUCKET_NAME=brandguard-audio-brandguard-481014
+      - VERTEX_AI_LOCATION=us-central1
+      - GEMINI_MODEL=gemini-2.0-flash-001
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
+      
+      # Firestore (ADVERIFY-UI-1)
+      - FIRESTORE_COLLECTION_OVERRIDES=audio_overrides
+      - FIRESTORE_COLLECTION_RESULTS=verification_results
+      
+      # CORS
+      - CORS_ORIGINS=["http://localhost:3000"]
+      
+    volumes:
+      # Mount GCP credentials for local development
+      - ./brandguard-481014-b6b02cb2d900.json:/app/service-account.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - brandguard-network
+
+  # ===========================================================================
+  # Frontend Dashboard
+  # Reference: ADVERIFY-UI - Management UI
+  # ===========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    container_name: brandguard-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - brandguard-network
+
+# ===========================================================================
+# Volumes
+# ===========================================================================
+volumes:
+  redis-data:
+    driver: local
+
+# ===========================================================================
+# Networks
+# ===========================================================================
+networks:
+  brandguard-network:
+    driver: bridge

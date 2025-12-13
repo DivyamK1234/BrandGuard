@@ -1,0 +1,30 @@
+# BrandGuard Backend Dependencies
+# Python 3.11+ required
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# Pydantic for data validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Google Cloud SDKs - pinned to compatible versions
+google-cloud-firestore==2.16.0
+google-cloud-storage==2.16.0
+google-cloud-speech==2.26.0
+google-cloud-aiplatform==1.71.1
+google-genai==1.0.0
+
+# Redis for caching
+redis==5.0.1
+
+# HTTP client for URL fetching
+aiohttp==3.9.1
+
+# YouTube audio extraction
+yt-dlp>=2024.1.0
+
+# Logging and monitoring
+structlog==24.1.0
