@@ -2,10 +2,6 @@
 builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
-[source]
-rootDirectory = "backend"
-
 [deploy]
 healthcheckPath = "/health/live"
 healthcheckTimeout = 30
-restartPolicyType = "on_failure"
