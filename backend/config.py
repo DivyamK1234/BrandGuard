@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     
     # Redis Configuration (ADVERIFY-BE-1 - Cache Layer)
+    redis_url: Optional[str] = Field(default=None, description="Redis URL (overrides host/port/password)")
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")
     redis_password: Optional[str] = Field(default=None, description="Redis password")
@@ -37,6 +38,25 @@ class Settings(BaseSettings):
         default=86400,  # 24 hours
         description="Cache TTL in seconds (ADVERIFY-AI-3: 24h TTL)"
     )
+    
+    def get_redis_config(self) -> dict:
+        """Parse Redis config from URL or individual settings."""
+        if self.redis_url:
+            # Parse redis://user:password@host:port format
+            from urllib.parse import urlparse
+            parsed = urlparse(self.redis_url)
+            return {
+                "host": parsed.hostname or "localhost",
+                "port": parsed.port or 6379,
+                "password": parsed.password,
+                "db": int(parsed.path[1:]) if parsed.path and len(parsed.path) > 1 else 0
+            }
+        return {
+            "host": self.redis_host,
+            "port": self.redis_port,
+            "password": self.redis_password,
+            "db": self.redis_db
+        }
     
     # Google Cloud Platform Settings
     google_cloud_project: str = Field(
