@@ -54,7 +54,7 @@ export default function Home() {
                             </div>
                             <div className="flex items-center gap-2 text-sm text-surface-400">
                                 <Zap className="w-4 h-4 text-brand-400" />
-                                <span>Gemini 3.0 Pro</span>
+                                <span>Gemini</span>
                             </div>
                         </div>
                     </div>
@@ -135,7 +135,7 @@ function DemoClientView() {
                 </h2>
                 <p className="text-lg text-surface-400 max-w-2xl mx-auto">
                     Upload your audio file and let our AI-powered system analyze it for brand safety.
-                    Powered by Gemini 3.0 Pro with real-time classification.
+                    Powered by Gemini with real-time classification.
                 </p>
             </div>
 
