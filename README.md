@@ -5,7 +5,7 @@
 > **AI-powered audio content classification for brand safety in digital advertising.**  
 > Built following DoubleVerify's AdDomain Verification architecture patterns.
 
-![BrandGuard Dashboard](docs/screenshot.png)
+![BrandGuard Dashboard](dashboard-screenshot.png)
 
 ## 🎯 Overview
 
