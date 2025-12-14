@@ -257,7 +257,7 @@ export default function AudioAnalyzer() {
                 setStatusMessage('Uploading and analyzing...')
                 setProgress(30)
 
-                const response = await fetch('http://localhost:8000/api/v1/verify_audio', {
+                const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/verify_audio`, {
                     method: 'POST',
                     body: formData,
                 })
@@ -274,7 +274,7 @@ export default function AudioAnalyzer() {
                 // URL mode - use async processing with polling
                 setStatusMessage('Submitting job...')
 
-                const submitResponse = await fetch('http://localhost:8000/api/v1/verify_audio_async', {
+                const submitResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/verify_audio_async`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -307,7 +307,7 @@ export default function AudioAnalyzer() {
                 while (attempts < maxAttempts) {
                     await new Promise(resolve => setTimeout(resolve, 2000))
 
-                    const statusResponse = await fetch(`http://localhost:8000/api/v1/job/${jobId}`)
+                    const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/job/${jobId}`)
                     if (!statusResponse.ok) {
                         throw new Error('Failed to get job status')
                     }
