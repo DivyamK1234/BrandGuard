@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", description="Logging level")
     
     # Redis Configuration (ADVERIFY-BE-1 - Cache Layer)
+    # For Upstash or cloud Redis, use REDIS_URL (e.g., rediss://user:pass@host:port)
+    redis_url: Optional[str] = Field(default=None, description="Redis URL (overrides host/port/password)")
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")
     redis_password: Optional[str] = Field(default=None, description="Redis password")

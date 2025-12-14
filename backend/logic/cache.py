@@ -34,27 +34,40 @@ def get_redis_client() -> redis.Redis:
     Uses lazy initialization to avoid connection issues during import.
     Connection pool enables high-throughput, low-latency operations.
     
+    Supports both URL-based connection (for Upstash/cloud) and host/port.
+    
     Reference: ADVERIFY-BE-1 - Ultra-low latency lookups
     """
     global _redis_client
     if _redis_client is None:
         settings = get_settings()
         
-        # Configure connection pool for optimal performance
-        pool = redis.ConnectionPool(
-            host=settings.redis_host,
-            port=settings.redis_port,
-            password=settings.redis_password,
-            db=settings.redis_db,
-            decode_responses=True,
-            max_connections=50,
-            socket_timeout=0.1,  # 100ms timeout for fast fail
-            socket_connect_timeout=0.1,
-            retry_on_timeout=True
-        )
-        
-        _redis_client = redis.Redis(connection_pool=pool)
-        logger.info(f"Initialized Redis client: {settings.redis_host}:{settings.redis_port}")
+        # If REDIS_URL is provided, use it (for Upstash/cloud Redis)
+        if settings.redis_url:
+            _redis_client = redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_timeout=5.0,  # Longer timeout for cloud
+                socket_connect_timeout=5.0,
+                retry_on_timeout=True
+            )
+            logger.info(f"Initialized Redis client from URL (SSL enabled)")
+        else:
+            # Configure connection pool for local Redis
+            pool = redis.ConnectionPool(
+                host=settings.redis_host,
+                port=settings.redis_port,
+                password=settings.redis_password,
+                db=settings.redis_db,
+                decode_responses=True,
+                max_connections=50,
+                socket_timeout=0.1,  # 100ms timeout for fast fail
+                socket_connect_timeout=0.1,
+                retry_on_timeout=True
+            )
+            
+            _redis_client = redis.Redis(connection_pool=pool)
+            logger.info(f"Initialized Redis client: {settings.redis_host}:{settings.redis_port}")
     
     return _redis_client
 
