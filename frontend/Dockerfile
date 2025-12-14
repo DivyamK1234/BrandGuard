@@ -7,9 +7,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 
-# Install dependencies based on package-lock.json
+# Install dependencies (including devDependencies for build)
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+RUN npm ci
 
 # =============================================================================
 # Stage 2: Builder
