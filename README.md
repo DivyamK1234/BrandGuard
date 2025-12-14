@@ -1,7 +1,5 @@
 # BrandGuard - Audio Safety Verification Microservice
 
-[![Deploy to Cloud Run](https://github.com/YOUR_ORG/brandguard/actions/workflows/deploy.yaml/badge.svg)](https://github.com/YOUR_ORG/brandguard/actions/workflows/deploy.yaml)
-
 > **AI-powered audio content classification for brand safety in digital advertising.**  
 > Built following DoubleVerify's AdDomain Verification architecture patterns.
 
@@ -211,9 +209,10 @@ npm run lint
 
 ## 📜 License
 
-Proprietary - DoubleVerify Interview Project
+Proprietary - BrandGuard Project
 
 ---
 
 Built with ❤️ using FastAPI, Next.js, and Vertex AI
 # trigger
+
