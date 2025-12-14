@@ -93,7 +93,12 @@ class Settings(BaseSettings):
     # API Configuration
     api_prefix: str = Field(default="/api/v1", description="API route prefix")
     cors_origins: list = Field(
-        default=["http://localhost:3000", "http://localhost:8000"],
+        default=[
+            "http://localhost:3000",
+            "http://localhost:8000",
+            "https://brandguard-frontend-1067726353916.us-central1.run.app",
+            "https://brandguard-backend-1067726353916.us-central1.run.app",
+        ],
         description="Allowed CORS origins"
     )
     
