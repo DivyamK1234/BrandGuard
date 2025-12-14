@@ -41,12 +41,22 @@ class JobQueue:
     @property
     def client(self) -> redis.Redis:
         if self._client is None:
-            self._client = redis.Redis(
-                host=self.settings.redis_host,
-                port=self.settings.redis_port,
-                decode_responses=True
-            )
-            logger.info(f"Initialized job queue Redis client: {self.settings.redis_host}")
+            # Use URL if available (for Upstash/cloud), otherwise use host/port
+            if self.settings.redis_url:
+                self._client = redis.from_url(
+                    self.settings.redis_url,
+                    decode_responses=True,
+                    socket_timeout=5.0,
+                    socket_connect_timeout=5.0
+                )
+                logger.info(f"Initialized job queue Redis client from URL")
+            else:
+                self._client = redis.Redis(
+                    host=self.settings.redis_host,
+                    port=self.settings.redis_port,
+                    decode_responses=True
+                )
+                logger.info(f"Initialized job queue Redis client: {self.settings.redis_host}")
         return self._client
     
     def create_job(self, audio_url: str, audio_id: Optional[str] = None) -> str:
