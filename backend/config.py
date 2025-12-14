@@ -66,7 +66,7 @@ class Settings(BaseSettings):
         description="Vertex AI region"
     )
     gemini_model: str = Field(
-        default="gemini-2.0-flash-001",
+        default="gemini-3-pro-preview",
         description="Gemini model identifier"
     )
     gemini_temperature: float = Field(
