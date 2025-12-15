@@ -101,7 +101,7 @@ export default function Home() {
                             <span>BrandGuard v1.0.0</span>
                         </div>
                         <div className="flex items-center gap-6">
-                            <span>Powered by DoubleVerify Architecture</span>
+                            <span>Brand Safety Architecture</span>
                             <span className="flex items-center gap-1">
                                 <BarChart3 className="w-4 h-4" />
                                 P95 Target: &lt;20ms
@@ -160,7 +160,7 @@ function DemoClientView() {
 }
 
 /**
- * Admin Console View - The "DoubleVerify" Experience
+ * Admin Console View - Override Management
  * 
  * Features:
  * - Override table with search/filter

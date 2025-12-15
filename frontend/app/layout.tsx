@@ -11,7 +11,7 @@ export const metadata: Metadata = {
     title: 'BrandGuard | Audio Safety Verification',
     description: 'AI-powered audio content classification for brand safety in digital advertising',
     keywords: ['brand safety', 'audio verification', 'ad tech', 'AI', 'content moderation'],
-    authors: [{ name: 'DoubleVerify' }],
+    authors: [{ name: 'BrandGuard' }],
     openGraph: {
         title: 'BrandGuard | Audio Safety Verification',
         description: 'AI-powered audio content classification for brand safety',

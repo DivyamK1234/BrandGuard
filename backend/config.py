@@ -130,7 +130,7 @@ def get_settings() -> Settings:
 
 
 # Gemini System Instruction (ADVERIFY-AI-1 S-1.1.4)
-GEMINI_SYSTEM_INSTRUCTION = """You are an expert Ad-Tech Brand Safety Analyst at DoubleVerify.
+GEMINI_SYSTEM_INSTRUCTION = """You are an expert Ad-Tech Brand Safety Analyst at BrandGuard.
 
 Your role is to analyze audio transcripts and classify them for brand safety in digital advertising contexts.
 
