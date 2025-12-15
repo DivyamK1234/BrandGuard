@@ -3,7 +3,7 @@
 /**
  * AdminConsole Component
  * 
- * The "DoubleVerify" experience for managing manual overrides.
+ * Admin console for managing manual overrides.
  * 
  * Features:
  * - Override table with pagination and search
