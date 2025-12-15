@@ -30,7 +30,7 @@ from models import (
     BrandSafetyScore
 )
 from config import get_settings
-from logic import overrides, cache, ai_engine
+from logic import overrides, cache, ai_engine, stats
 
 # Configure logging
 logging.basicConfig(
@@ -96,6 +96,9 @@ async def add_timing_header(request: Request, call_next):
     elapsed_ms = (time.perf_counter() - start_time) * 1000
     
     response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.2f}"
+    
+    # Record stats
+    stats.record_latency(elapsed_ms)
     
     # Log warning if exceeds P95 target
     if elapsed_ms > settings.total_p95_target_ms and "/health" not in request.url.path:
@@ -191,6 +194,7 @@ async def verify_audio(
         audio_id = f"audio_{int(time.time() * 1000)}"
     
     logger.info(f"Verification request for audio_id: {audio_id}")
+    stats.increment_request_count()
     
     # Step 1: Check Override (highest priority)
     # Implements Logic S-2.1.4: Check high-priority Override Database first
@@ -247,6 +251,8 @@ async def verify_audio_from_url(request: AudioVerificationRequest):
     """
     if not request.audio_url:
         raise HTTPException(status_code=400, detail="audio_url is required")
+        
+    stats.increment_request_count()
     
     # Check override first
     override_result = overrides.check_override(request.audio_id)
@@ -466,6 +472,20 @@ async def cache_stats():
     Reference: ADVERIFY-AI-3 (S-1.3.2) - Metrics Instrumentation
     """
     return cache.get_cache_stats()
+
+
+@app.get("/api/v1/stats/dashboard", tags=["Metrics"])
+async def dashboard_stats():
+    """
+    Get aggregated dashboard statistics.
+    
+    Includes:
+    - Request counts (total, today)
+    - Token usage (total, today)
+    - Latency performance
+    - Cache health
+    """
+    return stats.get_dashboard_stats()
 
 
 # =============================================================================
