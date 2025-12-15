@@ -20,8 +20,9 @@ import {
 } from 'lucide-react'
 import AudioAnalyzer from '@/components/AudioAnalyzer'
 import AdminConsole from '@/components/AdminConsole'
+import StatsDashboard from '@/components/StatsDashboard'
 
-type TabType = 'demo' | 'admin'
+type TabType = 'demo' | 'admin' | 'stats'
 
 export default function Home() {
     const [activeTab, setActiveTab] = useState<TabType>('demo')
@@ -79,6 +80,13 @@ export default function Home() {
                             <Settings className="w-4 h-4" />
                             Admin Console
                         </button>
+                        <button
+                            onClick={() => setActiveTab('stats')}
+                            className={`tab-button flex items-center gap-2 ${activeTab === 'stats' ? 'active' : ''}`}
+                        >
+                            <BarChart3 className="w-4 h-4" />
+                            Analytics
+                        </button>
                     </div>
                 </div>
             </nav>
@@ -87,8 +95,10 @@ export default function Home() {
             <main className="max-w-7xl mx-auto px-6 py-8">
                 {activeTab === 'demo' ? (
                     <DemoClientView />
-                ) : (
+                ) : activeTab === 'admin' ? (
                     <AdminConsoleView />
+                ) : (
+                    <StatsDashboardView />
                 )}
             </main>
 
@@ -184,6 +194,25 @@ function AdminConsoleView() {
 
             {/* Admin Console Component */}
             <AdminConsole />
+        </div>
+    )
+}
+
+/**
+ * Stats Dashboard View
+ */
+function StatsDashboardView() {
+    return (
+        <div className="space-y-8">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h2 className="text-2xl font-bold text-white">System Analytics</h2>
+                    <p className="text-surface-400">
+                        Real-time monitoring of API performance, token usage, and cache efficiency.
+                    </p>
+                </div>
+            </div>
+            <StatsDashboard />
         </div>
     )
 }
