@@ -5,6 +5,7 @@ import json
 import uuid
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -12,6 +13,7 @@ from enum import Enum
 import redis
 
 from config import get_settings
+import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -154,59 +156,86 @@ async def process_url_job(job_id: str, audio_url: str, audio_id: str, client_pol
     from logic.ai_engine import analyze_from_url_full
     
     queue = get_job_queue()
+    start_time = time.perf_counter()
     
-    try:
-        # Stage 1: Downloading
-        queue.update_job(
-            job_id,
-            status=JobStatus.DOWNLOADING,
-            progress=10,
-            message="Downloading audio from URL..."
-        )
-        
-        # Run the full analysis (which includes download + AI)
-        result = await analyze_from_url_full(
-            audio_url,
-            audio_id,
-            client_policy,
-            progress_callback=lambda p, m: queue.update_job(job_id, progress=p, message=m)
-        )
-        
-        # Stage 3: Complete
-        # Convert result to JSON-serializable dict
-        if hasattr(result, 'model_dump'):
-            result_dict = result.model_dump(mode='json')
-        else:
-            # Manually serialize datetime fields
-            result_dict = {}
-            for key, value in result.__dict__.items():
-                if isinstance(value, datetime):
-                    result_dict[key] = value.isoformat()
-                elif hasattr(value, 'value'):  # Enum
-                    result_dict[key] = value.value
-                else:
-                    result_dict[key] = value
-        
-        queue.update_job(
-            job_id,
-            status=JobStatus.COMPLETE,
-            progress=100,
-            message="Analysis complete!",
-            result=result_dict
-        )
-        
-        # Save to cache for future lookups
-        from logic.cache import set_cache
-        set_cache(audio_id, result)
-        
-        logger.info(f"Job {job_id} completed successfully, cached with audio_id: {audio_id}")
-        
-    except Exception as e:
-        logger.error(f"Job {job_id} failed: {e}")
-        queue.update_job(
-            job_id,
-            status=JobStatus.FAILED,
-            progress=0,
-            message="Analysis failed",
-            error=str(e)
-        )
+    with telemetry.SpanContext("job.process_url", {
+        "job_id": job_id,
+        "audio_id": audio_id,
+        "audio_url": audio_url[:100] if audio_url else None  # Truncate URL for safety
+    }) as span:
+        try:
+            # Stage 1: Downloading
+            queue.update_job(
+                job_id,
+                status=JobStatus.DOWNLOADING,
+                progress=10,
+                message="Downloading audio from URL..."
+            )
+            if span:
+                span.set_attribute("job.status", "downloading")
+            
+            # Run the full analysis (which includes download + AI)
+            result = await analyze_from_url_full(
+                audio_url,
+                audio_id,
+                client_policy,
+                progress_callback=lambda p, m: queue.update_job(job_id, progress=p, message=m)
+            )
+            
+            # Stage 3: Complete
+            # Convert result to JSON-serializable dict
+            if hasattr(result, 'model_dump'):
+                result_dict = result.model_dump(mode='json')
+            else:
+                # Manually serialize datetime fields
+                result_dict = {}
+                for key, value in result.__dict__.items():
+                    if isinstance(value, datetime):
+                        result_dict[key] = value.isoformat()
+                    elif hasattr(value, 'value'):  # Enum
+                        result_dict[key] = value.value
+                    else:
+                        result_dict[key] = value
+            
+            queue.update_job(
+                job_id,
+                status=JobStatus.COMPLETE,
+                progress=100,
+                message="Analysis complete!",
+                result=result_dict
+            )
+            
+            # Save to cache for future lookups
+            from logic.cache import set_cache
+            set_cache(audio_id, result)
+            
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"Job {job_id} completed successfully, cached with audio_id: {audio_id} (duration: {elapsed_ms:.0f}ms)")
+            
+            if span:
+                span.set_attribute("job.status", "complete")
+                span.set_attribute("job.duration_ms", elapsed_ms)
+            
+            # Record job completion metric
+            if telemetry.job_counter:
+                telemetry.job_counter.add(1, {"status": "complete", "job_id": job_id})
+            
+        except Exception as e:
+            logger.error(f"Job {job_id} failed: {e}")
+            telemetry.record_exception(e)
+            
+            queue.update_job(
+                job_id,
+                status=JobStatus.FAILED,
+                progress=0,
+                message="Analysis failed",
+                error=str(e)
+            )
+            
+            if span:
+                span.set_attribute("job.status", "failed")
+                span.set_attribute("job.error", str(e))
+            
+            # Record job failure metric
+            if telemetry.job_counter:
+                telemetry.job_counter.add(1, {"status": "failed", "job_id": job_id, "error_type": type(e).__name__})
