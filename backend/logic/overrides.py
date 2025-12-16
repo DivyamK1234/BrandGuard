@@ -21,6 +21,7 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 
 from models import VerificationResult, BrandSafetyScore, VerificationSource, OverrideRecord
 from config import get_settings
+import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -61,36 +62,43 @@ def check_override(audio_id: str) -> Optional[VerificationResult]:
     """
     settings = get_settings()
     
-    try:
-        db = get_firestore_client()
-        doc_ref = db.collection(settings.firestore_collection_overrides).document(audio_id)
-        doc = doc_ref.get()
-        
-        if doc.exists:
-            data = doc.to_dict()
-            logger.info(f"Override found for audio_id: {audio_id}")
+    with telemetry.SpanContext("firestore.check_override", {"audio_id": audio_id}) as span:
+        try:
+            db = get_firestore_client()
+            doc_ref = db.collection(settings.firestore_collection_overrides).document(audio_id)
+            doc = doc_ref.get()
             
-            # Convert Firestore data to VerificationResult
-            return VerificationResult(
-                audio_id=audio_id,
-                brand_safety_score=BrandSafetyScore(data.get("brand_safety_score", "UNKNOWN")),
-                fraud_flag=data.get("fraud_flag", False),
-                category_tags=data.get("category_tags", []),
-                source=VerificationSource.MANUAL_OVERRIDE,
-                confidence_score=1.0,  # Manual overrides have 100% confidence
-                unsafe_segments=data.get("unsafe_segments"),
-                transcript_snippet=data.get("transcript_snippet"),
-                created_at=data.get("created_at", datetime.utcnow())
-            )
-        
-        logger.debug(f"No override found for audio_id: {audio_id}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"Error checking override for {audio_id}: {e}")
-        # On error, return None to fall through to cache/AI
-        # This prevents overrides DB issues from blocking requests
-        return None
+            if doc.exists:
+                data = doc.to_dict()
+                logger.info(f"Override found for audio_id: {audio_id}")
+                
+                if span:
+                    span.set_attribute("override.found", True)
+                    span.set_attribute("override.brand_safety_score", data.get("brand_safety_score", "UNKNOWN"))
+                
+                # Convert Firestore data to VerificationResult
+                return VerificationResult(
+                    audio_id=audio_id,
+                    brand_safety_score=BrandSafetyScore(data.get("brand_safety_score", "UNKNOWN")),
+                    fraud_flag=data.get("fraud_flag", False),
+                    category_tags=data.get("category_tags", []),
+                    source=VerificationSource.MANUAL_OVERRIDE,
+                    confidence_score=1.0,  # Manual overrides have 100% confidence
+                    unsafe_segments=data.get("unsafe_segments"),
+                    transcript_snippet=data.get("transcript_snippet"),
+                    created_at=data.get("created_at", datetime.utcnow())
+                )
+            
+            logger.debug(f"No override found for audio_id: {audio_id}")
+            if span:
+                span.set_attribute("override.found", False)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error checking override for {audio_id}: {e}")
+            telemetry.record_exception(e)
+            # On error, return None to fall through to cache/AI
+            return None
 
 
 def create_override(override: OverrideRecord) -> OverrideRecord:
@@ -108,14 +116,17 @@ def create_override(override: OverrideRecord) -> OverrideRecord:
     settings = get_settings()
     db = get_firestore_client()
     
-    override.created_at = datetime.utcnow()
-    override.updated_at = datetime.utcnow()
-    
-    doc_ref = db.collection(settings.firestore_collection_overrides).document(override.audio_id)
-    doc_ref.set(override.model_dump())
-    
-    logger.info(f"Created override for audio_id: {override.audio_id} by {override.created_by}")
-    return override
+    with telemetry.SpanContext("firestore.create_override", {"audio_id": override.audio_id}) as span:
+        override.created_at = datetime.utcnow()
+        override.updated_at = datetime.utcnow()
+        
+        doc_ref = db.collection(settings.firestore_collection_overrides).document(override.audio_id)
+        doc_ref.set(override.model_dump())
+        
+        logger.info(f"Created override for audio_id: {override.audio_id} by {override.created_by}")
+        if span:
+            span.set_attribute("override.created_by", override.created_by or "unknown")
+        return override
 
 
 def update_override(audio_id: str, override: OverrideRecord) -> Optional[OverrideRecord]:

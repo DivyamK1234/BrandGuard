@@ -14,6 +14,7 @@ Cache-First, AI-Fallback pattern from the AdVerify architecture.
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Optional, Tuple
@@ -26,6 +27,7 @@ from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
 
 from models import VerificationResult, BrandSafetyScore, VerificationSource
 from config import get_settings, GEMINI_SYSTEM_INSTRUCTION, GEMINI_OUTPUT_SCHEMA
+import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -297,25 +299,34 @@ async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str]
     Reference: ADVERIFY-AI-1 - AI Classification Endpoint
     """
     logger.info(f"Starting fast AI analysis for: {audio_id}")
+    start_time = time.perf_counter()
     
-    try:
-        settings = get_settings()
-        _init_vertex_ai()
+    with telemetry.SpanContext("gemini.analyze", {
+        "audio_id": audio_id,
+        "audio_size_bytes": len(audio_data),
+        "has_client_policy": client_policy is not None
+    }) as span:
+        try:
+            settings = get_settings()
+            _init_vertex_ai()
+            
+            # Upload to GCS first (needed for Gemini to access)
+            with telemetry.SpanContext("gcs.upload", {"audio_id": audio_id}):
+                gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
+                if span:
+                    span.set_attribute("gcs_uri", gcs_uri)
         
-        # Upload to GCS first (needed for Gemini to access)
-        gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
-        
-        # Initialize Gemini model with audio capability
-        model = GenerativeModel(
-            settings.gemini_model,
-            system_instruction=GEMINI_SYSTEM_INSTRUCTION
-        )
-        
-        # Create audio part from GCS URI
-        audio_part = Part.from_uri(gcs_uri, mime_type="audio/mpeg")
-        
-        # Build the classification prompt
-        prompt = f"""Analyze this audio content for brand safety classification.
+            # Initialize Gemini model with audio capability
+            model = GenerativeModel(
+                settings.gemini_model,
+                system_instruction=GEMINI_SYSTEM_INSTRUCTION
+            )
+            
+            # Create audio part from GCS URI
+            audio_part = Part.from_uri(gcs_uri, mime_type="audio/mpeg")
+            
+            # Build the classification prompt
+            prompt = f"""Analyze this audio content for brand safety classification.
 
 ## Audio ID
 {audio_id}
@@ -353,121 +364,149 @@ Respond with a valid JSON object:
   "transcript_snippet": "First 200 characters of the main content"
 }}
 """
-        
-        # Configure generation
-        generation_config = GenerationConfig(
-            temperature=0.1,
-            max_output_tokens=8192,
-        )
-        
-        logger.info(f"Calling Gemini with audio for: {audio_id}")
-        
-        response = model.generate_content(
-            [audio_part, prompt],
-            generation_config=generation_config
-        )
-        
-        # Parse JSON response - try multiple strategies
-        response_text = response.text.strip()
-        logger.info(f"Gemini raw response for {audio_id} (first 800 chars): {response_text[:800]}")
-        
-        classification = None
-        
-        # Strategy 0: Clean markdown code blocks and find JSON boundaries
-        clean_text = response_text.replace("```json", "").replace("```", "").strip()
-        start_idx = clean_text.find('{')
-        end_idx = clean_text.rfind('}')
-        
-        if start_idx != -1 and end_idx != -1:
-            clean_text = clean_text[start_idx : end_idx + 1]
-            try:
-                classification = json.loads(clean_text)
-                logger.info(f"Cleaned JSON parse succeeded: {classification.get('brand_safety_score')}")
-            except json.JSONDecodeError as e:
-                logger.warning(f"Cleaned JSON parse failed: {e}")
-
-        # Strategy 1: Direct JSON parse (if Strategy 0 failed or wasn't tried)
-        if classification is None:
-            try:
-                classification = json.loads(response_text)
-                logger.info(f"Direct JSON parse succeeded: {classification.get('brand_safety_score')}")
-            except json.JSONDecodeError:
-                logger.warning(f"Direct JSON parse failed, trying extraction...")
-        
-        # Strategy 2: Extract JSON object from text
-        if classification is None:
-            import re
-            # Find JSON object (handles nested objects)
-            matches = re.findall(r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}', response_text, re.DOTALL)
-            for match in matches:
+            
+            # Configure generation
+            generation_config = GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=8192,
+            )
+            
+            logger.info(f"Calling Gemini with audio for: {audio_id}")
+            gemini_start = time.perf_counter()
+            
+            with telemetry.SpanContext("gemini.generate_content", {
+                "model": settings.gemini_model,
+                "audio_id": audio_id
+            }) as gemini_span:
+                response = model.generate_content(
+                    [audio_part, prompt],
+                    generation_config=generation_config
+                )
+                
+                gemini_elapsed_ms = (time.perf_counter() - gemini_start) * 1000
+                if gemini_span:
+                    gemini_span.set_attribute("gemini.duration_ms", gemini_elapsed_ms)
+                
+                # Record Gemini API duration metric
+                if telemetry.gemini_duration:
+                    telemetry.gemini_duration.record(
+                        gemini_elapsed_ms,
+                        {"model": settings.gemini_model, "audio_id": audio_id}
+                    )
+            
+            # Parse JSON response - try multiple strategies
+            response_text = response.text.strip()
+            logger.info(f"Gemini raw response for {audio_id} (first 800 chars): {response_text[:800]}")
+            
+            classification = None
+            
+            # Strategy 0: Clean markdown code blocks and find JSON boundaries
+            clean_text = response_text.replace("```json", "").replace("```", "").strip()
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1:
+                clean_text = clean_text[start_idx : end_idx + 1]
                 try:
-                    parsed = json.loads(match)
-                    if 'brand_safety_score' in parsed:
-                        classification = parsed
-                        logger.info(f"Extracted JSON succeeded: {classification.get('brand_safety_score')}")
-                        break
+                    classification = json.loads(clean_text)
+                    logger.info(f"Cleaned JSON parse succeeded: {classification.get('brand_safety_score')}")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Cleaned JSON parse failed: {e}")
+
+            # Strategy 1: Direct JSON parse (if Strategy 0 failed or wasn't tried)
+            if classification is None:
+                try:
+                    classification = json.loads(response_text)
+                    logger.info(f"Direct JSON parse succeeded: {classification.get('brand_safety_score')}")
                 except json.JSONDecodeError:
-                    continue
-        
-        # Strategy 3: Fallback - parse the response manually
-        if classification is None:
-            logger.warning(f"All JSON parsing failed, using fallback")
-            # Try to extract key values from the text
-            score = "UNKNOWN"
-            if "RISK_HIGH" in response_text:
-                score = "RISK_HIGH"
-            elif "RISK_MEDIUM" in response_text:
-                score = "RISK_MEDIUM"
-            elif "SAFE" in response_text and "UNSAFE" not in response_text.upper():
-                score = "SAFE"
+                    logger.warning(f"Direct JSON parse failed, trying extraction...")
             
-            classification = {
-                "brand_safety_score": score,
-                "fraud_flag": "true" in response_text.lower() and "fraud" in response_text.lower(),
-                "category_tags": [],
-                "confidence_score": 0.7,
-                "unsafe_segments": [],
-                "transcript_snippet": response_text[:300]
-            }
+            # Strategy 2: Extract JSON object from text
+            if classification is None:
+                import re
+                # Find JSON object (handles nested objects)
+                matches = re.findall(r'\{(?:[^{}]|(?:\{[^{}]*\}))*\}', response_text, re.DOTALL)
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if 'brand_safety_score' in parsed:
+                            classification = parsed
+                            logger.info(f"Extracted JSON succeeded: {classification.get('brand_safety_score')}")
+                            break
+                    except json.JSONDecodeError:
+                        continue
             
-            # Extract category tags
-            for tag in ["politics", "news", "entertainment", "music", "explicit", "violence", "controversial", "business"]:
-                if tag in response_text.lower():
-                    classification["category_tags"].append(tag)
-        
-        # Build result
-        result = VerificationResult(
-            audio_id=audio_id,
-            brand_safety_score=BrandSafetyScore(
-                classification.get("brand_safety_score", "UNKNOWN")
-            ),
-            fraud_flag=classification.get("fraud_flag", False),
-            category_tags=classification.get("category_tags", []),
-            source=VerificationSource.AI_GENERATED,
-            confidence_score=classification.get("confidence_score"),
-            unsafe_segments=classification.get("unsafe_segments"),
-            transcript_snippet=classification.get("transcript_snippet"),
-            content_summary=classification.get("content_summary"),
-            created_at=datetime.utcnow()
-        )
-        
-        logger.info(f"Fast AI analysis complete for {audio_id}: {result.brand_safety_score.value}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"AI analysis failed for {audio_id}: {e}")
-        
-        # Return UNKNOWN result on failure
-        return VerificationResult(
-            audio_id=audio_id,
-            brand_safety_score=BrandSafetyScore.UNKNOWN,
-            fraud_flag=False,
-            category_tags=["error"],
-            source=VerificationSource.AI_GENERATED,
-            confidence_score=0.0,
-            transcript_snippet=f"Analysis failed: {str(e)}",
-            created_at=datetime.utcnow()
-        )
+            # Strategy 3: Fallback - parse the response manually
+            if classification is None:
+                logger.warning(f"All JSON parsing failed, using fallback")
+                # Try to extract key values from the text
+                score = "UNKNOWN"
+                if "RISK_HIGH" in response_text:
+                    score = "RISK_HIGH"
+                elif "RISK_MEDIUM" in response_text:
+                    score = "RISK_MEDIUM"
+                elif "SAFE" in response_text and "UNSAFE" not in response_text.upper():
+                    score = "SAFE"
+                
+                classification = {
+                    "brand_safety_score": score,
+                    "fraud_flag": "true" in response_text.lower() and "fraud" in response_text.lower(),
+                    "category_tags": [],
+                    "confidence_score": 0.7,
+                    "unsafe_segments": [],
+                    "transcript_snippet": response_text[:300]
+                }
+                
+                # Extract category tags
+                for tag in ["politics", "news", "entertainment", "music", "explicit", "violence", "controversial", "business"]:
+                    if tag in response_text.lower():
+                        classification["category_tags"].append(tag)
+            
+            # Build result
+            result = VerificationResult(
+                audio_id=audio_id,
+                brand_safety_score=BrandSafetyScore(
+                    classification.get("brand_safety_score", "UNKNOWN")
+                ),
+                fraud_flag=classification.get("fraud_flag", False),
+                category_tags=classification.get("category_tags", []),
+                source=VerificationSource.AI_GENERATED,
+                confidence_score=classification.get("confidence_score"),
+                unsafe_segments=classification.get("unsafe_segments"),
+                transcript_snippet=classification.get("transcript_snippet"),
+                content_summary=classification.get("content_summary"),
+                created_at=datetime.utcnow()
+            )
+            
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(f"Fast AI analysis complete for {audio_id}: {result.brand_safety_score.value} (total: {elapsed_ms:.0f}ms)")
+            
+            if span:
+                span.set_attribute("result.brand_safety_score", result.brand_safety_score.value)
+                span.set_attribute("result.fraud_flag", result.fraud_flag)
+                span.set_attribute("total_duration_ms", elapsed_ms)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"AI analysis failed for {audio_id}: {e}")
+            telemetry.record_exception(e)
+            
+            # Record error metric
+            if telemetry.gemini_error_counter:
+                telemetry.gemini_error_counter.add(1, {"audio_id": audio_id, "error_type": type(e).__name__})
+            
+            # Return UNKNOWN result on failure
+            return VerificationResult(
+                audio_id=audio_id,
+                brand_safety_score=BrandSafetyScore.UNKNOWN,
+                fraud_flag=False,
+                category_tags=["error"],
+                source=VerificationSource.AI_GENERATED,
+                confidence_score=0.0,
+                transcript_snippet=f"Analysis failed: {str(e)}",
+                created_at=datetime.utcnow()
+            )
 
 
 async def analyze_from_url(audio_url: str, audio_id: str, client_policy: Optional[str] = None) -> VerificationResult:

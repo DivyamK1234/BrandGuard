@@ -13,6 +13,7 @@ Also provides Admin API for manual override management (ADVERIFY-UI-1 S-2.1.3).
 
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ from models import (
 )
 from config import get_settings
 from logic import overrides, cache, ai_engine
+import telemetry
 
 # Configure logging
 logging.basicConfig(
@@ -53,10 +55,14 @@ async def lifespan(app: FastAPI):
     logger.info(f"Project: {settings.google_cloud_project}")
     logger.info(f"Redis: {settings.redis_host}:{settings.redis_port}")
     
+    # Initialize OpenTelemetry
+    telemetry.setup_telemetry()
+    
     yield
     
     # Shutdown
     logger.info("BrandGuard API shutting down...")
+    telemetry.shutdown_telemetry()
 
 
 # Initialize FastAPI app
@@ -71,6 +77,10 @@ app = FastAPI(
 
 # Configure CORS
 settings = get_settings()
+
+# Instrument FastAPI with OpenTelemetry
+telemetry.instrument_fastapi(app)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -85,23 +95,63 @@ app.add_middleware(
 # =============================================================================
 
 @app.middleware("http")
-async def add_timing_header(request: Request, call_next):
+async def add_timing_and_telemetry(request: Request, call_next):
     """
-    Add response timing for latency monitoring.
+    Add response timing, request ID, and metrics collection.
     
     Reference: ADVERIFY-BE-3 (S-1.3.2) - Metrics Instrumentation
     """
+    # Generate request ID for correlation
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    
     start_time = time.perf_counter()
-    response = await call_next(request)
-    elapsed_ms = (time.perf_counter() - start_time) * 1000
     
-    response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.2f}"
+    # Add request ID to span attributes
+    telemetry.add_span_attributes({
+        "http.request_id": request_id,
+        "http.route": request.url.path
+    })
     
-    # Log warning if exceeds P95 target
-    if elapsed_ms > settings.total_p95_target_ms and "/health" not in request.url.path:
-        logger.warning(f"Request exceeded P95 target: {request.url.path} took {elapsed_ms:.2f}ms")
-    
-    return response
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        
+        response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.2f}"
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = telemetry.get_current_trace_id() or ""
+        
+        # Record metrics (skip health checks)
+        if "/health" not in request.url.path:
+            if telemetry.request_counter:
+                telemetry.request_counter.add(
+                    1,
+                    {"method": request.method, "endpoint": request.url.path, "status": str(response.status_code)}
+                )
+            if telemetry.request_duration:
+                telemetry.request_duration.record(
+                    elapsed_ms,
+                    {"method": request.method, "endpoint": request.url.path}
+                )
+        
+        # Log warning if exceeds P95 target
+        if elapsed_ms > settings.total_p95_target_ms and "/health" not in request.url.path:
+            logger.warning(
+                f"Request exceeded P95 target: {request.url.path} took {elapsed_ms:.2f}ms",
+                extra={"trace_id": telemetry.get_current_trace_id(), "request_id": request_id}
+            )
+        
+        return response
+        
+    except Exception as e:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        telemetry.record_exception(e)
+        
+        if telemetry.request_counter:
+            telemetry.request_counter.add(
+                1,
+                {"method": request.method, "endpoint": request.url.path, "status": "500"}
+            )
+        raise
 
 
 # =============================================================================
