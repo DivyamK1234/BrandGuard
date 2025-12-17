@@ -112,6 +112,28 @@ class Settings(BaseSettings):
         description="P95 latency target for cached requests"
     )
     
+    # OpenTelemetry Configuration
+    otel_enabled: bool = Field(
+        default=True,
+        description="Enable OpenTelemetry tracing and metrics"
+    )
+    otel_service_name: str = Field(
+        default="brandguard-backend",
+        description="Service name for tracing"
+    )
+    otel_service_version: str = Field(
+        default="1.0.0",
+        description="Service version for tracing"
+    )
+    otel_environment: str = Field(
+        default="development",
+        description="Deployment environment (development, staging, production)"
+    )
+    otel_exporter_endpoint: str = Field(
+        default="http://jaeger:4317",
+        description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

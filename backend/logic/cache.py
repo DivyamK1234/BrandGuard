@@ -20,6 +20,7 @@ from redis.exceptions import RedisError
 
 from models import VerificationResult, BrandSafetyScore, VerificationSource
 from config import get_settings
+import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -100,56 +101,74 @@ def check_cache(audio_id: str) -> Optional[VerificationResult]:
     """
     start_time = time.perf_counter()
     
-    try:
-        client = get_redis_client()
-        cache_key = _get_cache_key(audio_id)
-        
-        cached_data = client.get(cache_key)
-        
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        
-        if cached_data:
-            # Parse cached JSON
-            data = json.loads(cached_data)
-            
-            result = VerificationResult(
-                audio_id=audio_id,
-                brand_safety_score=BrandSafetyScore(data.get("brand_safety_score", "UNKNOWN")),
-                fraud_flag=data.get("fraud_flag", False),
-                category_tags=data.get("category_tags", []),
-                source=VerificationSource.CACHE,  # Mark as from cache
-                confidence_score=data.get("confidence_score"),
-                unsafe_segments=data.get("unsafe_segments"),
-                transcript_snippet=data.get("transcript_snippet"),
-                created_at=data.get("created_at")
-            )
-            
-            logger.info(f"Cache HIT for audio_id: {audio_id} (latency: {elapsed_ms:.2f}ms)")
-            
-            # Log warning if latency exceeds target
-            if elapsed_ms > 5:
-                logger.warning(f"Cache lookup exceeded 5ms target: {elapsed_ms:.2f}ms")
-            
-            return result
-        
-        logger.debug(f"Cache MISS for audio_id: {audio_id} (latency: {elapsed_ms:.2f}ms)")
-        return None
-        
-    except RedisError as e:
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.error(f"Redis error checking cache for {audio_id}: {e} (latency: {elapsed_ms:.2f}ms)")
-        # On Redis error, return None to fall through to AI
-        # This prevents cache issues from blocking requests
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in cache for {audio_id}: {e}")
-        # Delete corrupted cache entry
+    with telemetry.SpanContext("cache.check", {"audio_id": audio_id}) as span:
         try:
             client = get_redis_client()
-            client.delete(_get_cache_key(audio_id))
-        except Exception:
-            pass
-        return None
+            cache_key = _get_cache_key(audio_id)
+            
+            cached_data = client.get(cache_key)
+            
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            
+            if cached_data:
+                # Parse cached JSON
+                data = json.loads(cached_data)
+                
+                result = VerificationResult(
+                    audio_id=audio_id,
+                    brand_safety_score=BrandSafetyScore(data.get("brand_safety_score", "UNKNOWN")),
+                    fraud_flag=data.get("fraud_flag", False),
+                    category_tags=data.get("category_tags", []),
+                    source=VerificationSource.CACHE,  # Mark as from cache
+                    confidence_score=data.get("confidence_score"),
+                    unsafe_segments=data.get("unsafe_segments"),
+                    transcript_snippet=data.get("transcript_snippet"),
+                    created_at=data.get("created_at")
+                )
+                
+                logger.info(f"Cache HIT for audio_id: {audio_id} (latency: {elapsed_ms:.2f}ms)")
+                
+                # Record metrics and span attributes
+                if span:
+                    span.set_attribute("cache.hit", True)
+                    span.set_attribute("cache.latency_ms", elapsed_ms)
+                if telemetry.cache_hit_counter:
+                    telemetry.cache_hit_counter.add(1, {"audio_id": audio_id})
+                
+                # Log warning if latency exceeds target
+                if elapsed_ms > 5:
+                    logger.warning(f"Cache lookup exceeded 5ms target: {elapsed_ms:.2f}ms")
+                
+                return result
+            
+            # Cache miss
+            logger.debug(f"Cache MISS for audio_id: {audio_id} (latency: {elapsed_ms:.2f}ms)")
+            if span:
+                span.set_attribute("cache.hit", False)
+                span.set_attribute("cache.latency_ms", elapsed_ms)
+            if telemetry.cache_miss_counter:
+                telemetry.cache_miss_counter.add(1, {"audio_id": audio_id})
+            
+            return None
+            
+        except RedisError as e:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.error(f"Redis error checking cache for {audio_id}: {e} (latency: {elapsed_ms:.2f}ms)")
+            if span:
+                span.set_attribute("cache.error", True)
+            telemetry.record_exception(e)
+            # On Redis error, return None to fall through to AI
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in cache for {audio_id}: {e}")
+            telemetry.record_exception(e)
+            # Delete corrupted cache entry
+            try:
+                client = get_redis_client()
+                client.delete(_get_cache_key(audio_id))
+            except Exception:
+                pass
+            return None
 
 
 def set_cache(audio_id: str, result: VerificationResult) -> bool:
@@ -172,37 +191,42 @@ def set_cache(audio_id: str, result: VerificationResult) -> bool:
     """
     settings = get_settings()
     
-    try:
-        client = get_redis_client()
-        cache_key = _get_cache_key(audio_id)
-        
-        # Serialize result to JSON (exclude source field as it will be set to CACHE on read)
-        cache_data = {
-            "brand_safety_score": result.brand_safety_score.value,
-            "fraud_flag": result.fraud_flag,
-            "category_tags": result.category_tags,
-            "confidence_score": result.confidence_score,
-            "unsafe_segments": result.unsafe_segments,
-            "transcript_snippet": result.transcript_snippet,
-            "created_at": result.created_at.isoformat() if result.created_at else None
-        }
-        
-        # Set with TTL (24 hours)
-        client.setex(
-            cache_key,
-            settings.cache_ttl_seconds,
-            json.dumps(cache_data)
-        )
-        
-        logger.info(f"Cached verification result for audio_id: {audio_id} (TTL: {settings.cache_ttl_seconds}s)")
-        return True
-        
-    except RedisError as e:
-        logger.error(f"Redis error caching result for {audio_id}: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Error caching result for {audio_id}: {e}")
-        return False
+    with telemetry.SpanContext("cache.set", {"audio_id": audio_id}) as span:
+        try:
+            client = get_redis_client()
+            cache_key = _get_cache_key(audio_id)
+            
+            # Serialize result to JSON
+            cache_data = {
+                "brand_safety_score": result.brand_safety_score.value,
+                "fraud_flag": result.fraud_flag,
+                "category_tags": result.category_tags,
+                "confidence_score": result.confidence_score,
+                "unsafe_segments": result.unsafe_segments,
+                "transcript_snippet": result.transcript_snippet,
+                "created_at": result.created_at.isoformat() if result.created_at else None
+            }
+            
+            # Set with TTL (24 hours)
+            client.setex(
+                cache_key,
+                settings.cache_ttl_seconds,
+                json.dumps(cache_data)
+            )
+            
+            logger.info(f"Cached verification result for audio_id: {audio_id} (TTL: {settings.cache_ttl_seconds}s)")
+            if span:
+                span.set_attribute("cache.ttl_seconds", settings.cache_ttl_seconds)
+            return True
+            
+        except RedisError as e:
+            logger.error(f"Redis error caching result for {audio_id}: {e}")
+            telemetry.record_exception(e)
+            return False
+        except Exception as e:
+            logger.error(f"Error caching result for {audio_id}: {e}")
+            telemetry.record_exception(e)
+            return False
 
 
 def invalidate_cache(audio_id: str) -> bool:
