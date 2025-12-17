@@ -28,3 +28,11 @@ yt-dlp>=2024.1.0
 
 # Logging and monitoring
 structlog==24.1.0
+
+# OpenTelemetry - Observability (Tracing, Metrics, Logging)
+opentelemetry-api==1.27.0
+opentelemetry-sdk==1.27.0
+opentelemetry-exporter-otlp==1.27.0
+opentelemetry-instrumentation-fastapi==0.48b0
+opentelemetry-instrumentation-redis==0.48b0
+opentelemetry-instrumentation-logging==0.48b0
