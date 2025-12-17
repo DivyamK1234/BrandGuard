@@ -26,6 +26,7 @@ from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
 
 from models import VerificationResult, BrandSafetyScore, VerificationSource
 from config import get_settings, GEMINI_SYSTEM_INSTRUCTION, GEMINI_OUTPUT_SCHEMA
+from logic import stats
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +259,13 @@ Respond with a valid JSON object matching the required schema.
         # Parse JSON response
         result = json.loads(response.text)
         
+        # Track token usage
+        if response.usage_metadata:
+            stats.increment_token_usage(
+                response.usage_metadata.prompt_token_count,
+                response.usage_metadata.candidates_token_count
+            )
+        
         logger.info(f"Gemini classification complete for {audio_id}: {result.get('brand_safety_score')}")
         
         return result
@@ -370,6 +378,13 @@ Respond with a valid JSON object:
         # Parse JSON response - try multiple strategies
         response_text = response.text.strip()
         logger.info(f"Gemini raw response for {audio_id} (first 800 chars): {response_text[:800]}")
+        
+        # Track token usage
+        if response.usage_metadata:
+            stats.increment_token_usage(
+                response.usage_metadata.prompt_token_count,
+                response.usage_metadata.candidates_token_count
+            )
         
         classification = None
         
