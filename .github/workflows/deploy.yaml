@@ -12,11 +12,47 @@ env:
   REGION: us-central1
   BACKEND_SERVICE: brandguard-backend
   FRONTEND_SERVICE: brandguard-frontend
+  JAEGER_SERVICE: brandguard-jaeger
   REGISTRY: us-central1-docker.pkg.dev
 
 jobs:
+  # Deploy Jaeger first for tracing
+  deploy-jaeger:
+    runs-on: ubuntu-latest
+    outputs:
+      jaeger_url: ${{ steps.deploy.outputs.url }}
+    
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Auth with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Jaeger to Cloud Run
+        id: deploy
+        run: |
+          URL=$(gcloud run deploy ${{ env.JAEGER_SERVICE }} \
+            --image=jaegertracing/all-in-one:1.53 \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --port=16686 \
+            --memory=512Mi \
+            --cpu=1 \
+            --set-env-vars="COLLECTOR_OTLP_ENABLED=true" \
+            --format='value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
   deploy-backend:
     runs-on: ubuntu-latest
+    needs: deploy-jaeger
     outputs:
       backend_url: ${{ steps.deploy.outputs.url }}
     
@@ -60,11 +96,15 @@ jobs:
             --set-env-vars="GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
             --set-env-vars="GCS_BUCKET_NAME=brandguard-audio-brandguard-481014" \
             --set-env-vars="VERTEX_AI_LOCATION=us-central1" \
-            --set-env-vars="REDIS_URL=${{ secrets.REDIS_URL }}"
+            --set-env-vars="REDIS_URL=${{ secrets.REDIS_URL }}" \
+            --set-env-vars="OTEL_ENABLED=true" \
+            --set-env-vars="OTEL_SERVICE_NAME=brandguard-backend" \
+            --set-env-vars="OTEL_ENVIRONMENT=production" \
+            --set-env-vars="OTEL_EXPORTER_ENDPOINT=${{ needs.deploy-jaeger.outputs.jaeger_url }}:443"
 
   deploy-frontend:
     runs-on: ubuntu-latest
-    needs: deploy-backend
+    needs: [deploy-jaeger, deploy-backend]
     
     permissions:
       contents: read
