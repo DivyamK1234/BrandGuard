@@ -358,15 +358,35 @@ async def verify_audio_async(request: AudioVerificationRequest):
     queue = get_job_queue()
     job_id = queue.create_job(request.audio_url, request.audio_id)
     
-    # Start background task
-    asyncio.create_task(
-        process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
+    # PRODUCE TO KAFKA
+    # Instead of running the job in-process, we send it to Kafka
+    # This makes the API more reliable and scalable
+    from logic.kafka_producer import get_kafka_producer
+    producer = get_kafka_producer()
+    
+    success = producer.send_job(
+        job_id=job_id,
+        audio_url=request.audio_url,
+        audio_id=request.audio_id,
+        client_policy=request.client_policy
     )
+    
+    if not success:
+        # Fallback to local processing if Kafka is down (optional, but good for stability)
+        logger.warning(f"Kafka delivery failed for job {job_id}, falling back to local task")
+        asyncio.create_task(
+            process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
+        )
+        return {
+            "job_id": job_id,
+            "status": "processing",
+            "message": "Job submitted (Local Fallback). Poll /api/v1/job/{job_id} for status."
+        }
     
     return {
         "job_id": job_id,
         "status": "processing",
-        "message": "Job submitted. Poll /api/v1/job/{job_id} for status."
+        "message": "Job submitted to Kafka. Poll /api/v1/job/{job_id} for status."
     }
 
 

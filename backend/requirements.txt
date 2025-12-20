@@ -36,3 +36,6 @@ opentelemetry-exporter-otlp==1.27.0
 opentelemetry-instrumentation-fastapi==0.48b0
 opentelemetry-instrumentation-redis==0.48b0
 opentelemetry-instrumentation-logging==0.48b0
+
+# Kafka
+confluent-kafka==2.3.0
