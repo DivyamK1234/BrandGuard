@@ -141,6 +141,10 @@ services:
       
       # CORS
       - CORS_ORIGINS=["http://localhost:3000"]
+
+    volumes:
+      # Mount GCP credentials for local development
+      - ./brandguard-481014-b6b02cb2d900.json:/app/service-account.json:ro
       
     dns:
       - 8.8.8.8
@@ -201,6 +205,13 @@ services:
       - OTEL_SERVICE_VERSION=1.0.0
       - OTEL_ENVIRONMENT=development
       - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
+
+    healthcheck:
+      disable: true
+
+    volumes:
+      # Mount GCP credentials for local development
+      - ./brandguard-481014-b6b02cb2d900.json:/app/service-account.json:ro
       
     dns:
       - 8.8.8.8
