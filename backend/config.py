@@ -134,6 +134,16 @@ class Settings(BaseSettings):
         description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
     )
 
+    # Kafka Configuration
+    kafka_bootstrap_servers: str = Field(
+        default="localhost:9092",
+        description="Kafka bootstrap servers"
+    )
+    kafka_topic_jobs: str = Field(
+        default="audio-verification-jobs",
+        description="Kafka topic for audio verification jobs"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
