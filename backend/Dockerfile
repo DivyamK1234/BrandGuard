@@ -43,6 +43,9 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Copy GCP credentials (for local development)
+COPY --chown=brandguard:brandguard brandguard-481014-b6b02cb2d900.json /app/service-account.json
+
 # Copy application code
 COPY --chown=brandguard:brandguard . .
 
