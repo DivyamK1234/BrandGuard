@@ -547,7 +547,10 @@ async def analyze_from_url(audio_url: str, audio_id: str, client_policy: Optiona
     
     try:
         # Check URL type and extract audio accordingly
-        if is_rss_feed(audio_url):
+        if "storage.googleapis.com" in audio_url or audio_url.startswith("gs://"):
+            logger.info(f"Detected GCS URL: {audio_url}")
+            audio_data = await extract_audio_from_gcs(audio_url, audio_id)
+        elif is_rss_feed(audio_url):
             logger.info(f"Detected RSS feed: {audio_url}")
             audio_data = await extract_audio_from_rss(audio_url, audio_id)
         elif is_supported_platform_url(audio_url):
@@ -761,6 +764,44 @@ async def extract_audio_from_rss(rss_url: str, audio_id: str) -> bytes:
     return audio_data
 
 
+async def extract_audio_from_gcs(url: str, audio_id: str) -> bytes:
+    """
+    Download audio from GCS using authenticated client.
+    
+    Handles both gs:// and https://storage.googleapis.com formats.
+    Using the authenticated client resolves 'Access Denied' for private buckets.
+    """
+    logger.info(f"Downloading from authenticated GCS for {audio_id}: {url}")
+    
+    try:
+        # Handle both formats
+        if url.startswith("gs://"):
+            parts = url[5:].split("/", 1)
+            bucket_name = parts[0]
+            blob_name = parts[1]
+        else:
+            # Expected format: https://storage.googleapis.com/[BUCKET]/[BLOB]
+            # Strip domain and partition
+            path = url.replace("https://storage.googleapis.com/", "")
+            parts = path.split("/", 1)
+            bucket_name = parts[0]
+            blob_name = parts[1]
+            
+        client = get_storage_client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        # Run synchronous GCS download in executor to avoid blocking event loop
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, blob.download_as_bytes)
+        
+    except Exception as e:
+        logger.error(f"GCS authenticated download failed: {e}")
+        # Fallback to direct aiohttp in case it was a public URL after all
+        raise 
+
+
 async def extract_youtube_audio(youtube_url: str, audio_id: str) -> bytes:
     """
     Extract audio from a YouTube video using yt-dlp.
@@ -876,49 +917,61 @@ async def analyze_from_url_full(
     
     update_progress(10, "Downloading audio...")
     
-    # Download audio without time limits
+    # Download audio
+    audio_data = None
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_template = os.path.join(temp_dir, f"{audio_id}.%(ext)s")
-            
-            ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
-                'outtmpl': output_template,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '128',
-                }],
-                'quiet': True,
-                'no_warnings': True,
-                'geo_bypass': True,
-                'retries': 3,
-            }
-            
-            def download():
-                import yt_dlp
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([audio_url])
-            
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, download)
-            
-            update_progress(50, "Download complete, processing...")
-            
-            # Find downloaded file
-            audio_data = None
-            for f in os.listdir(temp_dir):
-                if f.endswith(('.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav')):
-                    with open(os.path.join(temp_dir, f), 'rb') as file:
-                        audio_data = file.read()
-                    break
-            
-            if not audio_data:
-                raise ValueError("Failed to download audio")
-            
-            logger.info(f"Downloaded {len(audio_data)} bytes for {audio_id}")
+        # Check for GCS first (needed for private buckets)
+        if "storage.googleapis.com" in audio_url or audio_url.startswith("gs://"):
+            logger.info(f"Detected GCS URL in background job: {audio_url}")
+            audio_data = await extract_audio_from_gcs(audio_url, audio_id)
+        
+        if not audio_data:
+            # Try yt-dlp for general websites
+            with tempfile.TemporaryDirectory() as temp_dir:
+                output_template = os.path.join(temp_dir, f"{audio_id}.%(ext)s")
+                
+                ydl_opts = {
+                    'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                    'outtmpl': output_template,
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '128',
+                    }],
+                    'quiet': True,
+                    'no_warnings': True,
+                    'geo_bypass': True,
+                    'retries': 3,
+                }
+                
+                def download():
+                    import yt_dlp
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([audio_url])
+                
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, download)
+                
+                update_progress(50, "Download complete, processing...")
+                
+                # Find downloaded file
+                audio_data = None
+                for f in os.listdir(temp_dir):
+                    if f.endswith(('.mp3', '.m4a', '.webm', '.opus', '.ogg', '.wav')):
+                        with open(os.path.join(temp_dir, f), 'rb') as file:
+                            audio_data = file.read()
+                        break
+                
+                if not audio_data:
+                    raise ValueError("Failed to download audio")
+                
+                logger.info(f"Downloaded {len(audio_data)} bytes for {audio_id}")
             
     except Exception as e:
+        # If we already have audio data (from GCS), don't try fallback
+        if audio_data:
+            raise
+        
         # Fallback to direct download
         update_progress(15, "Trying direct download...")
         import aiohttp
