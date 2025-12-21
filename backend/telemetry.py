@@ -289,51 +289,6 @@ class SpanContext:
         return False
 
 
-# =============================================================================
-# Background Task Trace Context Propagation
-# =============================================================================
-
-from opentelemetry import context as otel_context
-from typing import Callable, Coroutine, Any
-import asyncio
-
-
-def get_current_context():
-    """Capture the current OpenTelemetry context for passing to background tasks."""
-    return otel_context.get_current()
-
-
-def run_with_context(ctx, coro: Coroutine) -> Coroutine:
-    """
-    Wrap a coroutine to run with the given OpenTelemetry context.
-    
-    Usage:
-        ctx = telemetry.get_current_context()
-        asyncio.create_task(telemetry.run_with_context(ctx, my_async_function()))
-    """
-    async def wrapper():
-        token = otel_context.attach(ctx)
-        try:
-            return await coro
-        finally:
-            otel_context.detach(token)
-    return wrapper()
-
-
-def create_task_with_context(coro: Coroutine) -> asyncio.Task:
-    """
-    Create an asyncio task that inherits the current trace context.
-    
-    This is a drop-in replacement for asyncio.create_task() that propagates
-    OpenTelemetry trace context to the background task.
-    
-    Usage:
-        telemetry.create_task_with_context(process_job(...))
-    """
-    ctx = get_current_context()
-    return asyncio.create_task(run_with_context(ctx, coro))
-
-
 def shutdown_telemetry() -> None:
     """
     Gracefully shutdown telemetry exporters.
@@ -349,4 +304,3 @@ def shutdown_telemetry() -> None:
         meter_provider.shutdown()
     
     logger.info("OpenTelemetry shutdown complete")
-

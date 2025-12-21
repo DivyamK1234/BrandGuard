@@ -358,8 +358,8 @@ async def verify_audio_async(request: AudioVerificationRequest):
     queue = get_job_queue()
     job_id = queue.create_job(request.audio_url, request.audio_id)
     
-    # Start background task with trace context propagation
-    telemetry.create_task_with_context(
+    # Start background task
+    asyncio.create_task(
         process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
     )
     
