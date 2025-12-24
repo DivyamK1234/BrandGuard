@@ -53,6 +53,15 @@ interface UnsafeSegment {
     reason: string
 }
 
+interface SensitiveSegment {
+    start?: number
+    end?: number
+    start_time?: string  // "MM:SS" format
+    end_time?: string    // "MM:SS" format
+    topic?: string
+    reason?: string      // Gemini sometimes uses 'reason' instead of 'topic'
+}
+
 interface VerificationResult {
     audio_id: string
     brand_safety_score: 'SAFE' | 'RISK_HIGH' | 'RISK_MEDIUM' | 'UNKNOWN'
@@ -61,6 +70,7 @@ interface VerificationResult {
     source: 'MANUAL_OVERRIDE' | 'CACHE' | 'AI_GENERATED'
     confidence_score: number | null
     unsafe_segments: UnsafeSegment[] | null
+    sensitive_segments: SensitiveSegment[] | null
     transcript_snippet: string | null
     content_summary: string | null
     created_at: string
@@ -719,10 +729,37 @@ export default function AudioAnalyzer() {
                                 </div>
                             )}
 
-                            {result.unsafe_segments?.length === 0 && (
+                            {/* Sensitive Topic Segments */}
+                            {result.sensitive_segments && result.sensitive_segments.length > 0 && (
+                                <div>
+                                    <p className="text-sm text-yellow-400 mb-2">
+                                        ⚠️ Sensitive Topic Discussions ({result.sensitive_segments.length})
+                                    </p>
+                                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                                        {result.sensitive_segments.map((segment, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20"
+                                            >
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="px-2 py-0.5 bg-yellow-500/20 rounded text-xs text-yellow-400 font-mono font-bold">
+                                                        {segment.start_time || formatTime(segment.start || 0)} - {segment.end_time || formatTime(segment.end || 0)}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-surface-300">{segment.topic || segment.reason}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-surface-500 mt-2">
+                                        💡 These segments discuss sensitive topics - review for brand fit
+                                    </p>
+                                </div>
+                            )}
+
+                            {result.unsafe_segments?.length === 0 && (!result.sensitive_segments || result.sensitive_segments.length === 0) && (
                                 <div className="p-4 bg-safe/10 rounded-xl border border-safe/20">
                                     <p className="text-sm text-safe">
-                                        ✅ No unsafe segments detected - ads can run throughout
+                                        ✅ No unsafe or sensitive segments detected - ads can run throughout
                                     </p>
                                 </div>
                             )}
