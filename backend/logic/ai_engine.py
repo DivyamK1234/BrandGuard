@@ -473,6 +473,7 @@ Respond with a valid JSON object:
                 source=VerificationSource.AI_GENERATED,
                 confidence_score=classification.get("confidence_score"),
                 unsafe_segments=classification.get("unsafe_segments"),
+                sensitive_segments=classification.get("sensitive_segments"),
                 transcript_snippet=classification.get("transcript_snippet"),
                 content_summary=classification.get("content_summary"),
                 created_at=datetime.utcnow()

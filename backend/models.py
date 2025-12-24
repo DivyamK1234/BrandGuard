@@ -80,6 +80,11 @@ class VerificationResult(BaseModel):
         description="Timestamp ranges of unsafe content for waveform visualization",
         examples=[[{"start": 12.5, "end": 18.3, "reason": "explicit_language"}]]
     )
+    sensitive_segments: Optional[List[dict]] = Field(
+        default=None,
+        description="Timestamp ranges of sensitive topic discussions (crime, violence, politics, etc.)",
+        examples=[[{"start": 45.0, "end": 120.0, "topic": "crime discussion"}]]
+    )
     transcript_snippet: Optional[str] = Field(
         default=None,
         description="Brief excerpt of the transcript for context"

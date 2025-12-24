@@ -192,16 +192,42 @@ Instead, analyze the CONTEXT in which language is used:
 
 4. **UNKNOWN**: Unable to determine safety level.
 
+## Segment Detection (IMPORTANT):
+
+You MUST identify TWO types of segments:
+
+### 1. unsafe_segments (Red - Dangerous Content)
+Content that is actively harmful, hateful, or explicit:
+- Hate speech or slurs
+- Explicit sexual content
+- Violence promotion or graphic violence
+- Personal attacks or harassment
+- Illegal activity promotion
+
+### 2. sensitive_segments (Yellow - Sensitive Topic Discussion)
+Content that DISCUSSES sensitive topics but is not inherently dangerous:
+- Crime discussion (murders, theft, fraud)
+- Violence discussion (wars, conflicts, accidents)
+- Death or tragedy mentions
+- Drug/alcohol references
+- Political debates
+- Religious discussions
+- Mental health topics
+
+**ALWAYS provide timestamps (in seconds) for both types of segments.**
+
 ## Output Requirements:
 - Always output valid JSON matching the required schema
 - Provide confidence_score between 0.0 and 1.0
 - List all detected category_tags
-- Only flag unsafe_segments for GENUINELY problematic content (hate, explicit, violence), NOT casual language
+- Include unsafe_segments for dangerous content (hate, explicit, violence promotion)
+- Include sensitive_segments for discussions of sensitive topics (crime, death, politics, etc.)
 - Include a brief content_summary describing what the audio is about
 
 ## Category Tags:
-Use lowercase tags from: news, politics, sports, entertainment, music, technology, business, health, education, gaming, lifestyle, adult, violence, controversial, misinformation, hate_speech, illegal, uncategorized
+Use lowercase tags from: news, politics, sports, entertainment, music, technology, business, health, education, gaming, lifestyle, crime, adult, violence, controversial, misinformation, hate_speech, illegal, uncategorized
 """
+
 
 # JSON Schema for Gemini Structured Output
 GEMINI_OUTPUT_SCHEMA = {
@@ -225,6 +251,7 @@ GEMINI_OUTPUT_SCHEMA = {
         },
         "unsafe_segments": {
             "type": "array",
+            "description": "Dangerous content: hate speech, explicit, violence promotion",
             "items": {
                 "type": "object",
                 "properties": {
@@ -235,12 +262,29 @@ GEMINI_OUTPUT_SCHEMA = {
                 "required": ["start", "end", "reason"]
             }
         },
+        "sensitive_segments": {
+            "type": "array",
+            "description": "Sensitive topic discussion: crime, death, politics, etc.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "number"},
+                    "end": {"type": "number"},
+                    "topic": {"type": "string"}
+                },
+                "required": ["start", "end", "topic"]
+            }
+        },
         "transcript_snippet": {
             "type": "string"
         },
         "reasoning": {
             "type": "string"
+        },
+        "content_summary": {
+            "type": "string"
         }
     },
     "required": ["brand_safety_score", "fraud_flag", "category_tags", "confidence_score"]
 }
+
