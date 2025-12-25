@@ -90,6 +90,7 @@ BrandGuard/
 ### Local Development
 
 1. **Clone and configure**
+
 ```bash
 git clone https://github.com/YOUR_ORG/brandguard.git
 cd brandguard
@@ -98,23 +99,58 @@ cp .env.example .env
 ```
 
 2. **Authenticate with GCP**
+
 ```bash
 gcloud auth application-default login
 ```
 
 3. **Start services**
+
 ```bash
 docker-compose up -d
 ```
 
 4. **Access the dashboard**
+
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
+## 🧰 Dev Container & Mise-en-Place (Recommended)
+
+You can develop inside a reproducible Dev Container (VS Code Remote - Containers) that uses the project's Docker Compose services.
+
+1. Install prerequisites: Docker Desktop (WSL2 on Windows) and the VS Code **Remote - Containers** extension.
+2. Run the helper to prepare local credentials and `.env` (cross-platform):
+
+PowerShell (Windows):
+
+```powershell
+.\.devcontainer\mise-en-place.ps1
+```
+
+Bash (macOS / Linux / WSL):
+
+```bash
+./.devcontainer/mise-en-place.sh
+```
+
+3. Open the repository in VS Code and choose _Remote-Containers: Open Folder in Container..._.
+
+What the helper scripts do:
+
+- Prompt to copy your GCP service-account JSON into the repo root (local dev only — do NOT commit it).
+- Create a `.env` with sensible local defaults.
+- Optionally start `docker compose up --build -d` for you.
+
+Security note: the helper copies credentials into the repo root for convenience. The repository's `.gitignore` already prevents committing service-account JSON files and `.env` files, but double-check before committing. Never push real service-account JSON to public repos.
+
+If you prefer not to use VS Code dev containers, the scripts can still create `.env` and start the compose stack for local testing.
+
 ### Development Without Docker
 
 **Backend:**
+
 ```bash
 cd backend
 python -m venv venv
@@ -124,6 +160,7 @@ uvicorn main:app --reload
 ```
 
 **Frontend:**
+
 ```bash
 cd frontend
 npm install
@@ -133,6 +170,7 @@ npm run dev
 ## 📡 API Reference
 
 ### Verify Audio
+
 ```http
 POST /api/v1/verify_audio
 Content-Type: multipart/form-data
@@ -143,6 +181,7 @@ client_policy: optional_policy_rules
 ```
 
 **Response:**
+
 ```json
 {
   "audio_id": "audio_12345",
@@ -152,13 +191,14 @@ client_policy: optional_policy_rules
   "source": "AI_GENERATED",
   "confidence_score": 0.87,
   "unsafe_segments": [
-    {"start": 12.5, "end": 18.3, "reason": "controversial_topic"}
+    { "start": 12.5, "end": 18.3, "reason": "controversial_topic" }
   ],
   "transcript_snippet": "...discussing the heated debate..."
 }
 ```
 
 ### Override Management
+
 ```http
 GET    /api/v1/admin/override          # List overrides
 POST   /api/v1/admin/override          # Create override
@@ -167,6 +207,7 @@ DELETE /api/v1/admin/override/{id}     # Delete override
 ```
 
 ### Health Checks
+
 ```http
 GET /health        # Full health status
 GET /health/ready  # Kubernetes readiness probe
@@ -175,24 +216,24 @@ GET /health/live   # Kubernetes liveness probe
 
 ## 🔧 Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GOOGLE_CLOUD_PROJECT` | GCP Project ID | required |
-| `GCS_BUCKET_NAME` | Audio storage bucket | required |
-| `REDIS_HOST` | Redis hostname | localhost |
-| `REDIS_PORT` | Redis port | 6379 |
-| `CACHE_TTL_SECONDS` | Cache TTL (24h) | 86400 |
-| `GEMINI_MODEL` | Vertex AI model | gemini-2.0-flash-001 |
-| `VERTEX_AI_LOCATION` | Vertex AI region | us-central1 |
+| Variable               | Description          | Default              |
+| ---------------------- | -------------------- | -------------------- |
+| `GOOGLE_CLOUD_PROJECT` | GCP Project ID       | required             |
+| `GCS_BUCKET_NAME`      | Audio storage bucket | required             |
+| `REDIS_HOST`           | Redis hostname       | localhost            |
+| `REDIS_PORT`           | Redis port           | 6379                 |
+| `CACHE_TTL_SECONDS`    | Cache TTL (24h)      | 86400                |
+| `GEMINI_MODEL`         | Vertex AI model      | gemini-2.0-flash-001 |
+| `VERTEX_AI_LOCATION`   | Vertex AI region     | us-central1          |
 
 ## 📊 Architecture Mapping
 
-| AdDomain Story | BrandGuard Implementation |
-|----------------|---------------------------|
-| ADVERIFY-BE-1 | `logic/cache.py` - Redis caching with <20ms target |
-| ADVERIFY-AI-1 | `logic/ai_engine.py` - Gemini classification |
-| ADVERIFY-UI-1 | `logic/overrides.py` + Admin Console |
-| ADVERIFY-BE-3 | `.github/workflows/deploy.yaml` |
+| AdDomain Story | BrandGuard Implementation                          |
+| -------------- | -------------------------------------------------- |
+| ADVERIFY-BE-1  | `logic/cache.py` - Redis caching with <20ms target |
+| ADVERIFY-AI-1  | `logic/ai_engine.py` - Gemini classification       |
+| ADVERIFY-UI-1  | `logic/overrides.py` + Admin Console               |
+| ADVERIFY-BE-3  | `.github/workflows/deploy.yaml`                    |
 
 ## 🧪 Testing
 
