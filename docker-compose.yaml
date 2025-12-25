@@ -56,6 +56,44 @@ services:
       - brandguard-network
 
   # ===========================================================================
+  # Kafka - Message Queue for Async Processing
+  # Reference: Event-driven architecture for background job processing
+  # ===========================================================================
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: brandguard-kafka
+    ports:
+      - "9092:9092"   # External access (localhost)
+    environment:
+      # KRaft mode configuration
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Cluster settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Log retention
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - brandguard-network
+
+  # ===========================================================================
   # Backend API
   # Reference: ADVERIFY-AI-1 - AI Classification Endpoint
   # ===========================================================================
@@ -94,6 +132,9 @@ services:
       - OTEL_ENVIRONMENT=development
       - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
 
+      # Kafka Configuration
+      - KAFKA_ENDPOINTS=kafka:9092
+
       # CORS
       - CORS_ORIGINS=["http://localhost:3000"]
 
@@ -104,6 +145,8 @@ services:
       redis:
         condition: service_healthy
       jaeger:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health/live" ]
@@ -140,6 +183,8 @@ services:
 # ===========================================================================
 volumes:
   redis-data:
+    driver: local
+  kafka-data:
     driver: local
 
 # ===========================================================================

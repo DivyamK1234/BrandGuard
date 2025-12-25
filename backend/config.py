@@ -133,6 +133,12 @@ class Settings(BaseSettings):
         default="http://jaeger:4317",
         description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
     )
+    kafka_endpoints: str = Field(
+        default="http://localhost:9092",
+        description="Kafka endpoints"
+    )
+
+
 
     class Config:
         env_file = ".env"
