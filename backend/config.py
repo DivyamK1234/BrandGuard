@@ -137,6 +137,18 @@ class Settings(BaseSettings):
         default="http://localhost:9092",
         description="Kafka endpoints"
     )
+    kafka_producer: str = Field(
+        "bootstrap.servers"="http://localhost:9092",
+        "linger.ms": 10,           # batch a little
+        "acks": "all"              # durability
+    )
+
+    kafka_consumer: str= Field(
+        "bootstrap.servers"="http://localhost:9092",
+        "auto.offset.reset"="earliest",
+        "enable.auto.commit"= True,
+        "auto.commit.interval.ms"= 1000,
+      )
 
 
 
