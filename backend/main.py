@@ -265,6 +265,8 @@ async def verify_audio(
     try:
         # Read audio file
         audio_data = await audio_file.read()
+
+
         
         # Run AI analysis pipeline
         result = await ai_engine.analyze(audio_data, audio_id, client_policy)
@@ -283,43 +285,43 @@ async def verify_audio(
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
-@app.post(
-    "/api/v1/verify_audio_url",
-    response_model=VerificationResult,
-    tags=["Verification"],
-    summary="Verify Audio from URL"
-)
-async def verify_audio_from_url(request: AudioVerificationRequest):
-    """
-    Verify audio from a URL instead of file upload.
+# @app.post(
+#     "/api/v1/verify_audio_url",
+#     response_model=VerificationResult,
+#     tags=["Verification"],
+#     summary="Verify Audio from URL"
+# )
+# async def verify_audio_from_url(request: AudioVerificationRequest):
+#     """
+#     Verify audio from a URL instead of file upload.
     
-    Useful for processing audio that's already hosted.
-    """
-    if not request.audio_url:
-        raise HTTPException(status_code=400, detail="audio_url is required")
+#     Useful for processing audio that's already hosted.
+#     """
+#     if not request.audio_url:
+#         raise HTTPException(status_code=400, detail="audio_url is required")
     
-    # Check override first
-    override_result = overrides.check_override(request.audio_id)
-    if override_result:
-        return override_result
+#     # Check override first
+#     override_result = overrides.check_override(request.audio_id)
+#     if override_result:
+#         return override_result
     
-    # Check cache
-    cached_result = cache.check_cache(request.audio_id)
-    if cached_result:
-        return cached_result
+#     # Check cache
+#     cached_result = cache.check_cache(request.audio_id)
+#     if cached_result:
+#         return cached_result
     
-    # AI analysis from URL
-    try:
-        result = await ai_engine.analyze_from_url(
-            request.audio_url,
-            request.audio_id,
-            request.client_policy
-        )
-        cache.set_cache(request.audio_id, result)
-        return result
-    except Exception as e:
-        logger.error(f"URL verification failed for {request.audio_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
+#     # AI analysis from URL
+#     try:
+#         result = await ai_engine.analyze_from_url(
+#             request.audio_url,
+#             request.audio_id,
+#             request.client_policy
+#         )
+#         cache.set_cache(request.audio_id, result)
+#         return result
+#     except Exception as e:
+#         logger.error(f"URL verification failed for {request.audio_id}: {e}")
+#         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
 # =============================================================================
