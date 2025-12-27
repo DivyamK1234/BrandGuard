@@ -31,8 +31,10 @@ from models import (
     BrandSafetyScore
 )
 from config import get_settings
-from logic import overrides, cache, ai_engine
+from logic import overrides, cache, ai_engine, jobs
 import telemetry
+from confluent_kafka import Producer, Consumer
+
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +95,14 @@ app.add_middleware(
 # =============================================================================
 # Middleware for request timing
 # =============================================================================
+async def delivery_report(err, msg):
+    if err:
+        logger.error("Delivery failed:", err)
+    else:
+        logger.info(
+            f"Delivered to {msg.topic()} "
+            f"[partition={msg.partition()} offset={msg.offset()}]"
+        )
 
 @app.middleware("http")
 async def add_timing_and_telemetry(request: Request, call_next):
@@ -263,21 +273,41 @@ async def verify_audio(
     logger.info(f"Cache miss for {audio_id}, initiating AI analysis")
     
     try:
+        queue = get_job_queue()
+        job_id = queue.create_job(audio_id= audio_id)
+
         # Read audio file
         audio_data = await audio_file.read()
 
+        with telemetry.SpanContext("gcs.upload", {
+            "audio_id": audio_id,
+            "audio_size_bytes": len(audio_data),
+            "has_client_policy": client_policy is not None
+        }) as span:
+            try:
+                #upload to gcs
+                gcs_uri = await ai_engine.upload_audio_to_gcs(audio_data, audio_id)
+                if span:
+                    span.set_attribute("gcs_uri", gcs_uri)
 
-        
-        # Run AI analysis pipeline
-        result = await ai_engine.analyze(audio_data, audio_id, client_policy)
-        
-        # Step 4: Cache the result
-        # Implements ADVERIFY-AI-3: Cache with 24h TTL
-        cache.set_cache(audio_id, result)
-        
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(f"AI analysis complete for {audio_id} (latency: {elapsed_ms:.2f}ms)")
-        
+        producer = Producer(settings.kafka_producer)
+
+        producer.produce(
+            topic="audio-verification-non-url",
+            value=json.dumps({
+                "audio_id": audio_id,
+                "audio_url": gcs_uri,
+                "client_policy": client_policy,
+                "job_id": job_id
+            }),
+            callback=delivery_report
+        )
+
+        producer.poll(0)
+        producer.flush()
+
+       #return job_id for polling (yet to do)ß 
+       
         return result
         
     except Exception as e:
@@ -285,48 +315,6 @@ async def verify_audio(
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
-# @app.post(
-#     "/api/v1/verify_audio_url",
-#     response_model=VerificationResult,
-#     tags=["Verification"],
-#     summary="Verify Audio from URL"
-# )
-# async def verify_audio_from_url(request: AudioVerificationRequest):
-#     """
-#     Verify audio from a URL instead of file upload.
-    
-#     Useful for processing audio that's already hosted.
-#     """
-#     if not request.audio_url:
-#         raise HTTPException(status_code=400, detail="audio_url is required")
-    
-#     # Check override first
-#     override_result = overrides.check_override(request.audio_id)
-#     if override_result:
-#         return override_result
-    
-#     # Check cache
-#     cached_result = cache.check_cache(request.audio_id)
-#     if cached_result:
-#         return cached_result
-    
-#     # AI analysis from URL
-#     try:
-#         result = await ai_engine.analyze_from_url(
-#             request.audio_url,
-#             request.audio_id,
-#             request.client_policy
-#         )
-#         cache.set_cache(request.audio_id, result)
-#         return result
-#     except Exception as e:
-#         logger.error(f"URL verification failed for {request.audio_id}: {e}")
-#         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
-
-
-# =============================================================================
-# Async Job API (Background Processing)
-# =============================================================================
 
 @app.post(
     "/api/v1/verify_audio_async",
