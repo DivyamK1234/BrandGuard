@@ -54,7 +54,7 @@ interface OverrideFormData {
     created_by: string
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
+
 
 export default function AdminConsole() {
     // State
@@ -83,9 +83,10 @@ export default function AdminConsole() {
         setError(null)
 
         try {
+            // Use relative path for Next.js proxy
             const url = searchQuery
-                ? `${API_BASE}/api/v1/admin/override?search=${encodeURIComponent(searchQuery)}`
-                : `${API_BASE}/api/v1/admin/override`
+                ? `/api/v1/admin/override?search=${encodeURIComponent(searchQuery)}`
+                : `/api/v1/admin/override`
 
             const response = await fetch(url)
             if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`)
@@ -148,9 +149,10 @@ export default function AdminConsole() {
             }
 
             const isEdit = !!editingOverride
+            // Use relative path for Next.js proxy
             const url = isEdit
-                ? `${API_BASE}/api/v1/admin/override/${editingOverride.audio_id}`
-                : `${API_BASE}/api/v1/admin/override`
+                ? `/api/v1/admin/override/${editingOverride.audio_id}`
+                : `/api/v1/admin/override`
 
             const response = await fetch(url, {
                 method: isEdit ? 'PUT' : 'POST',
@@ -172,7 +174,8 @@ export default function AdminConsole() {
     // Handle delete
     const handleDelete = async (audioId: string) => {
         try {
-            const response = await fetch(`${API_BASE}/api/v1/admin/override/${audioId}`, {
+            // Use relative path for Next.js proxy
+            const response = await fetch(`/api/v1/admin/override/${audioId}`, {
                 method: 'DELETE'
             })
 

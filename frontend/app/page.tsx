@@ -20,9 +20,9 @@ import {
 } from 'lucide-react'
 import AudioAnalyzer from '@/components/AudioAnalyzer'
 import AdminConsole from '@/components/AdminConsole'
-import StatsDashboard from '@/components/StatsDashboard'
+import AnalyticsDashboard from '@/components/AnalyticsDashboard'
 
-type TabType = 'demo' | 'admin' | 'stats'
+type TabType = 'demo' | 'admin' | 'analytics'
 
 export default function Home() {
     const [activeTab, setActiveTab] = useState<TabType>('demo')
@@ -81,8 +81,8 @@ export default function Home() {
                             Admin Console
                         </button>
                         <button
-                            onClick={() => setActiveTab('stats')}
-                            className={`tab-button flex items-center gap-2 ${activeTab === 'stats' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('analytics')}
+                            className={`tab-button flex items-center gap-2 ${activeTab === 'analytics' ? 'active' : ''}`}
                         >
                             <BarChart3 className="w-4 h-4" />
                             Analytics
@@ -98,7 +98,7 @@ export default function Home() {
                 ) : activeTab === 'admin' ? (
                     <AdminConsoleView />
                 ) : (
-                    <StatsDashboardView />
+                    <AnalyticsView />
                 )}
             </main>
 
@@ -133,7 +133,6 @@ export default function Home() {
  * - Red regions for unsafe content
  * - Real-time API integration
  * 
- * Reference: ADVERIFY-UI-2 - Service Health Dashboard (adapted for demo)
  */
 function DemoClientView() {
     return (
@@ -199,23 +198,35 @@ function AdminConsoleView() {
 }
 
 /**
- * Stats Dashboard View
+ * Analytics View - Real-Time Metrics Dashboard
+ * 
+ * Features:
+ * - Key metrics (total verifications, success rate, avg time)
+ * - Classification breakdown
+ * - 7-day trend chart
+ * - Recent verifications table
+ * 
+ * Reference: Custom Analytics Dashboard Feature
  */
-function StatsDashboardView() {
+function AnalyticsView() {
     return (
         <div className="space-y-8">
+            {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-2xl font-bold text-white">System Analytics</h2>
+                    <h2 className="text-2xl font-bold text-white">Real-Time Analytics</h2>
                     <p className="text-surface-400">
-                        Real-time monitoring of API performance, token usage, and cache efficiency.
+                        Monitor verification metrics and trends in real-time
                     </p>
                 </div>
             </div>
-            <StatsDashboard />
+
+            {/* Analytics Dashboard Component */}
+            <AnalyticsDashboard />
         </div>
     )
 }
+
 
 /**
  * Feature Card Component

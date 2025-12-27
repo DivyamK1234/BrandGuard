@@ -30,7 +30,8 @@ from models import (
     BrandSafetyScore
 )
 from config import get_settings
-from logic import overrides, cache, ai_engine, stats
+from logic import overrides, cache, ai_engine, stats, analytics
+import telemetry
 
 # Configure logging
 logging.basicConfig(
@@ -202,6 +203,17 @@ async def verify_audio(
     if override_result:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"Override hit for {audio_id} (latency: {elapsed_ms:.2f}ms)")
+        
+        # Track analytics
+        analytics.get_analytics_engine().track_verification(
+            audio_id=audio_id,
+            brand_safety_score=override_result.brand_safety_score,
+            source=override_result.source,
+            processing_time_ms=elapsed_ms,
+            fraud_flag=override_result.fraud_flag,
+            category_tags=override_result.category_tags
+        )
+        
         return override_result
     
     # Step 2: Check Cache
@@ -210,6 +222,17 @@ async def verify_audio(
     if cached_result:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"Cache hit for {audio_id} (latency: {elapsed_ms:.2f}ms)")
+        
+        # Track analytics
+        analytics.get_analytics_engine().track_verification(
+            audio_id=audio_id,
+            brand_safety_score=cached_result.brand_safety_score,
+            source=cached_result.source,
+            processing_time_ms=elapsed_ms,
+            fraud_flag=cached_result.fraud_flag,
+            category_tags=cached_result.category_tags
+        )
+        
         return cached_result
     
     # Step 3: AI Analysis (cache miss)
@@ -229,6 +252,16 @@ async def verify_audio(
         
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"AI analysis complete for {audio_id} (latency: {elapsed_ms:.2f}ms)")
+        
+        # Track analytics
+        analytics.get_analytics_engine().track_verification(
+            audio_id=audio_id,
+            brand_safety_score=result.brand_safety_score,
+            source=result.source,
+            processing_time_ms=elapsed_ms,
+            fraud_flag=result.fraud_flag,
+            category_tags=result.category_tags
+        )
         
         return result
         
@@ -463,6 +496,28 @@ async def delete_override_endpoint(audio_id: str):
 # =============================================================================
 # Metrics/Stats Endpoints
 # =============================================================================
+
+@app.get("/api/v1/analytics", tags=["Metrics"])
+async def get_analytics():
+    """
+    Get analytics dashboard data.
+    
+    Returns comprehensive metrics including:
+    - Total verifications and today's count
+    - Success rate and classification breakdown
+    - Average processing time
+    - Recent verifications (last 10)
+    - 7-day trend data
+    
+    Reference: Custom Analytics Dashboard Feature
+    """
+    try:
+        engine = analytics.get_analytics_engine()
+        return engine.get_analytics_summary()
+    except Exception as e:
+        logger.error(f"Failed to get analytics: {e}")
+        raise HTTPException(status_code=500, detail=f"Analytics error: {str(e)}")
+
 
 @app.get("/api/v1/stats/cache", tags=["Metrics"])
 async def cache_stats():
