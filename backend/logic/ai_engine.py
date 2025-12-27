@@ -281,7 +281,7 @@ Respond with a valid JSON object matching the required schema.
         raise
 
 
-async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str] = None) -> VerificationResult:
+async def analyze(gcs_uri: str, audio_id: str, client_policy: Optional[str] = None) -> VerificationResult:
     """
     Fast AI analysis pipeline using Gemini's native audio understanding.
     
@@ -311,10 +311,10 @@ async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str]
             _init_vertex_ai()
             
             # Upload to GCS first (needed for Gemini to access)
-            with telemetry.SpanContext("gcs.upload", {"audio_id": audio_id}):
-                gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
-                if span:
-                    span.set_attribute("gcs_uri", gcs_uri)
+            # with telemetry.SpanContext("gcs.upload", {"audio_id": audio_id}):
+            #     gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
+            #     if span:
+            #         span.set_attribute("gcs_uri", gcs_uri)
         
             # Initialize Gemini model with audio capability
             model = GenerativeModel(

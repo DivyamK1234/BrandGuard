@@ -133,6 +133,25 @@ class Settings(BaseSettings):
         default="http://jaeger:4317",
         description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
     )
+   
+    kafka_producer: Dict[str, Any] = Field(
+        default=lambda:{
+            "bootstrap.servers": "http://localhost:9092",
+            "linger.ms": 10,           # batch a little
+            "acks": "all"              # durability
+        }
+    )
+
+    kafka_consumer: Dict[str, Any]= Field(
+        default= lambda:{
+        "bootstrap.servers"="http://localhost:9092",
+        "auto.offset.reset"="earliest",
+        "enable.auto.commit"= True,
+        "auto.commit.interval.ms"= 1000
+        }
+      )
+
+
 
     class Config:
         env_file = ".env"
