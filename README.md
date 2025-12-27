@@ -15,6 +15,7 @@ BrandGuard is a production-grade microservice that analyzes audio content for br
 - **Ultra-Low Latency**: Cache-first architecture with <5ms cached lookups
 - **Manual Overrides**: Admin console for instant classification overrides
 - **Visual Analysis**: Waveform visualization with unsafe segment highlighting
+- **Real-Time Analytics**: Comprehensive metrics dashboard with trend analysis
 - **Production Ready**: Docker, Cloud Run, GitHub Actions CI/CD
 
 ## 🏗 Architecture
@@ -48,7 +49,8 @@ BrandGuard/
 │   ├── logic/
 │   │   ├── overrides.py     # Firestore override checks (ADVERIFY-UI-1)
 │   │   ├── cache.py         # Redis caching (ADVERIFY-BE-1)
-│   │   └── ai_engine.py     # Gemini AI classification (ADVERIFY-AI-1)
+│   │   ├── ai_engine.py     # Gemini AI classification (ADVERIFY-AI-1)
+│   │   └── analytics.py     # Real-time metrics tracking
 │   ├── models.py            # Pydantic data models
 │   ├── config.py            # Configuration & prompts
 │   ├── main.py              # FastAPI application
@@ -61,8 +63,9 @@ BrandGuard/
 │   │   ├── layout.tsx       # Root layout
 │   │   └── globals.css      # Tailwind styles
 │   ├── components/
-│   │   ├── AudioAnalyzer.tsx    # Waveform + analysis UI
-│   │   └── AdminConsole.tsx     # Override management
+│   │   ├── AudioAnalyzer.tsx      # Waveform + analysis UI
+│   │   ├── AdminConsole.tsx       # Override management
+│   │   └── AnalyticsDashboard.tsx # Real-time metrics dashboard
 │   ├── Dockerfile           # Production container
 │   └── package.json         # Node dependencies
 │
@@ -171,6 +174,29 @@ DELETE /api/v1/admin/override/{id}     # Delete override
 GET /health        # Full health status
 GET /health/ready  # Kubernetes readiness probe
 GET /health/live   # Kubernetes liveness probe
+```
+
+### Analytics
+
+```http
+GET /api/v1/analytics  # Real-time metrics dashboard data
+```
+
+**Response:**
+
+```json
+{
+  "total_verifications": 1234,
+  "today_count": 124,
+  "success_rate": 89.5,
+  "avg_processing_time_ms": 234.2,
+  "classification_breakdown": {...},
+  "recent_verifications": [...],
+  "trend_data": [...]
+}
+```
+
+See [docs/ANALYTICS.md](docs/ANALYTICS.md) for complete documentation.
 ```
 
 ## 🔧 Configuration

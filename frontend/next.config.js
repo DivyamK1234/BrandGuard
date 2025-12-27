@@ -6,16 +6,6 @@ const nextConfig = {
     // Output standalone for Docker deployment
     output: 'standalone',
 
-    // API rewrites to proxy backend requests
-    async rewrites() {
-        return [
-            {
-                source: '/api/:path*',
-                destination: process.env.BACKEND_URL || 'http://localhost:8000/api/:path*',
-            },
-        ]
-    },
-
     // Environment variables exposed to the browser
     env: {
         NEXT_PUBLIC_APP_NAME: 'BrandGuard',
