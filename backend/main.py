@@ -298,7 +298,8 @@ async def verify_audio(
                 "audio_id": audio_id,
                 "audio_url": gcs_uri,
                 "client_policy": client_policy,
-                "job_id": job_id
+                "job_id": job_id,
+                "gcs_tag":1
             }),
             callback=delivery_report
         )

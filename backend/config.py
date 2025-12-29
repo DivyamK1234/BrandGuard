@@ -9,7 +9,7 @@ Reference: ADVERIFY-BE-3 - Production deployment configuration
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Optional
+from typing import Optional, Dict, Any
 from functools import lru_cache
 
 
@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     
     # Google Cloud Platform Settings
     google_cloud_project: str = Field(
-        ...,
+        default= "test",
         description="GCP Project ID"
     )
     gcs_bucket_name: str = Field(
-        ...,
+        default="test",
         description="GCS bucket for audio file storage"
     )
     
@@ -135,21 +135,24 @@ class Settings(BaseSettings):
     )
    
     kafka_producer: Dict[str, Any] = Field(
-        default=lambda:{
-            "bootstrap.servers": "http://localhost:9092",
-            "linger.ms": 10,           # batch a little
-            "acks": "all"              # durability
-        }
-    )
+    default_factory=lambda: {
+        "bootstrap.servers": "localhost:9092",
+        "linger.ms": 10,
+        "acks": "all"
+    },
+    description="Kafka producer configuration"
+)
 
-    kafka_consumer: Dict[str, Any]= Field(
-        default= lambda:{
-        "bootstrap.servers"="http://localhost:9092",
-        "auto.offset.reset"="earliest",
-        "enable.auto.commit"= True,
-        "auto.commit.interval.ms"= 1000
-        }
-      )
+    kafka_consumer: Dict[str, Any] = Field(
+    default_factory=lambda: {
+        "bootstrap.servers": "localhost:9092",
+        "group.id": "brandguard-workers",
+        "auto.offset.reset": "earliest",
+        "enable.auto.commit": True,
+        "auto.commit.interval.ms": 1000
+    },
+    description="Kafka consumer configuration"
+)
 
 
 
