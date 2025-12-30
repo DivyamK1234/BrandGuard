@@ -39,10 +39,14 @@ RUN curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -
     && apt-get update && apt-get install -y google-cloud-cli
 
 # Install mise
-RUN curl https://mise.jdx.dev/install.sh | sh
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://mise.jdx.dev/gpg-key.pub | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=$(dpkg --print-architecture)] https://mise.jdx.dev/deb stable main" | tee /etc/apt/sources.list.d/mise.list \
+    && apt-get update \
+    && apt-get install -y mise
 
 # Add mise to the path for the vscode user
-ENV PATH="/home/vscode/.local/share/mise/bin:/home/vscode/.local/share/mise/shims:$PATH"
+ENV PATH="/home/vscode/.local/share/mise/shims:$PATH"
 
 # Set up mise for the vscode user
 USER vscode

@@ -19,5 +19,12 @@
   "mounts": [
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
+  "forwardPorts": [3000, 8000, 16686, 6379, 4317, 4318],
+  "portsAttributes": {
+    "3000": { "label": "Frontend Dashboard" },
+    "8000": { "label": "Backend API" },
+    "16686": { "label": "Jaeger UI" },
+    "6379": { "label": "Redis" }
+  },
   "postCreateCommand": "sudo chmod 666 /var/run/docker.sock && mise install && npm install -g pnpm && (cd frontend && npm install) && (cd backend && pip install -r requirements.txt)"
 }
