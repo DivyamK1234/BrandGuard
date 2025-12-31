@@ -87,6 +87,8 @@ async def consume():
                     )
                     
                     logger.info(f"Result: {result}")
+                    from logic.cache import set_cache
+                    set_cache(audio_id, result)
 
                     
                 else:
