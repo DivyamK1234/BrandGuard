@@ -136,7 +136,7 @@ class Settings(BaseSettings):
    
     kafka_producer: Dict[str, Any] = Field(
     default_factory=lambda: {
-        "bootstrap.servers": "localhost:9092",
+        "bootstrap.servers": "kafka:9092",
         "linger.ms": 10,
         "acks": "all"
     },
@@ -145,7 +145,7 @@ class Settings(BaseSettings):
 
     kafka_consumer: Dict[str, Any] = Field(
     default_factory=lambda: {
-        "bootstrap.servers": "localhost:9092",
+        "bootstrap.servers": "kafka:9092",
         "group.id": "brandguard-workers",
         "auto.offset.reset": "earliest",
         "enable.auto.commit": True,
@@ -153,6 +153,8 @@ class Settings(BaseSettings):
     },
     description="Kafka consumer configuration"
 )
+
+
 
 
 
