@@ -303,7 +303,7 @@ async def analyze(gcs_uri: str, audio_id: str, client_policy: Optional[str] = No
     
     with telemetry.SpanContext("gemini.analyze", {
         "audio_id": audio_id,
-        "audio_size_bytes": len(audio_data),
+        # "audio_size_bytes": len(audio_data),
         "has_client_policy": client_policy is not None
     }) as span:
         try:
