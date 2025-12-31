@@ -1,79 +1,110 @@
-import logging
+import asyncio
 import json
+import logging
 import signal
-import sys
-import time
 
 from confluent_kafka import Consumer, KafkaException
 from config import get_settings
-from logic import ai_engine, cache, jobs
-import telemetry
+from logic import ai_engine
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 running = True
 
+
 def shutdown(sig, frame):
     global running
-    print("Shutdown signal received...")
+    logger.info("Shutdown signal received...")
     running = False
+
 
 signal.signal(signal.SIGINT, shutdown)
 signal.signal(signal.SIGTERM, shutdown)
 
 
+async def consume():
+    global running
 
-settings=get_settings()
+    settings = get_settings()
+    consumer = Consumer(settings.kafka_consumer)
+    consumer.subscribe(["audio-verification-non-url"])
 
-consumer=Consumer(settings.kafka_consumer)
-consumer.subscribe(settings.kafka_topic)
+    logger.info("Consuming messages...")
 
-print("\nConsuming messages...")
-count=0
+    try:
+        while running:
+            msg = consumer.poll(1.0)
 
-try:
-    while running:
-        msg = consumer.poll(1.0)
+            if msg is None:
+                await asyncio.sleep(0)  # yield control
+                continue
 
-        if msg is None:
-            continue
+            if msg.error():
+                raise KafkaException(msg.error())
 
-        if msg.error():
-            raise KafkaException(msg.error())
+            try:
+                event = json.loads(msg.value().decode("utf-8"))
 
-        try:
-            event = json.loads(msg.value().decode("utf-8"))
-            audio_id = event["audio_id"]
-            job_id = event["job_id"]
-            audio_url = event["audio_url"]
-            gcs_tag=event["gcs_tag"]
-            client_policy=event["client_policy"]
-            logger.info(f"Processing audio_id={audio_id}")
+                audio_id = event["audio_id"]
+                audio_url = event["audio_url"]
+                job_id = event["job_id"]
+                gcs_tag = event.get("gcs_tag")
+                client_policy = event.get("client_policy")
 
-            if gcs_tag:
-                ai_engine.analyse(gcs_uri,audio_id,client_policy)
-            else:
-                ai_engine.analyse(audio_url,audio_id,client_policy)
+                logger.info(f"Processing audio_id={audio_id}, job_id={job_id}")
 
-            
-            print(f"Finished audio_id={audio_id}")
+                if gcs_tag == "1":
+                    result = await ai_engine.analyze(
+                        gcs_uri=audio_url,
+                        audio_id=audio_id,
+                        client_policy=client_policy,
+                    )
+                    if hasattr(result, 'model_dump'):
+                        result_dict = result.model_dump(mode='json')
+                    else:
+                        # Manually serialize datetime fields
+                        result_dict = {}
+                        for key, value in result.__dict__.items():
+                            if isinstance(value, datetime):
+                                result_dict[key] = value.isoformat()
+                            elif hasattr(value, 'value'):  # Enum
+                                result_dict[key] = value.value
+                            else:
+                                result_dict[key] = value
+                    from logic.jobs import get_job_queue, JobStatus
+                    queue= get_job_queue()
+                    queue.update_job(
+                        job_id=job_id,
+                        status= JobStatus.COMPLETE,
+                        progress= 100,
+                        message = "Analysis complete!",
+                        result = result_dict,
+                        error = None
+                    )
+                    
+                    logger.info(f"Result: {result}")
 
-            # Commit only after success
-            consumer.commit(msg)
-            
-            
+                    
+                else:
+                    logger.warning(f"Unknown gcs_tag={gcs_tag}")
+
+                logger.info(f"Finished audio_id={audio_id}")
+
+                # Commit ONLY after successful processing
+                consumer.commit(msg)
+
+            except Exception as e:
+                logger.exception(f"Processing failed for audio_id={audio_id}")
+                # ❌ do NOT commit → Kafka will retry
+
+    finally:
+        logger.info("Closing Kafka consumer...")
+        consumer.close()
 
 
-
-        except Exception as e:
-                    logger.error(f"Processing failed: {e}")
-                    # Do NOT commit -> message will be retried
-
-finally:
-    logger.info("Closing consumer...")
-    consumer.close()
-
+if __name__ == "__main__":
+    asyncio.run(consume())
