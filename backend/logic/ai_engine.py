@@ -929,10 +929,17 @@ async def analyze_from_url_full(
                 audio_data = await response.read()
     
     update_progress(60, "Uploading to cloud...")
-    
+    with telemetry.SpanContext("gcs.upload", {
+            "audio_id": audio_id,
+            "audio_size_bytes": len(audio_data),
+            "has_client_policy": client_policy is not None
+    }) as span:
+        gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
+        if span:
+            span.set_attribute("gcs_uri", gcs_uri)
     # Run analysis
     update_progress(70, "Analyzing with AI...")
-    result = await analyze(audio_data, audio_id, client_policy)
+    result = await analyze(gcs_uri, audio_id, client_policy)
     
     update_progress(100, "Complete!")
     return result

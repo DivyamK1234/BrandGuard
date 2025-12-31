@@ -363,10 +363,30 @@ async def verify_audio_async(request: AudioVerificationRequest):
     queue = get_job_queue()
     job_id = queue.create_job(request.audio_url, request.audio_id)
     
+    producer = Producer(settings.kafka_producer)
+
+    producer.produce(
+            topic="audio-verification-non-url",
+            value=json.dumps({
+                "audio_id": request.audio_id,
+                "audio_url": request.audio_url,
+                "client_policy": request.client_policy,
+                "job_id": job_id,
+                "gcs_tag": "0"
+            }),
+            callback=delivery_report
+        )
+    logger.info(f"Submitted job {job_id} to Kafka for processing")
+    producer.poll(0)
+    producer.flush()
+
+
     # Start background task
-    asyncio.create_task(
-        process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
-    )
+    # asyncio.create_task(
+    #     process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
+    # )
+
+    # logger.info(f"Submitted job {job_id} to url processor")
     
     return {
         "job_id": job_id,
