@@ -248,14 +248,16 @@ export default function AudioAnalyzer() {
         setStatusMessage('Starting analysis...')
 
         try {
+            let jobData: { job_id?: string; status?: string; result?: VerificationResult }
+
             if (inputMode === 'file' && file) {
-                // File upload mode - synchronous
+                // File upload mode - now uses job polling like URL mode
                 const formData = new FormData()
                 formData.append('audio_file', file)
                 formData.append('audio_id', `upload_${hashString(file.name + file.size)}`)
 
-                setStatusMessage('Uploading and analyzing...')
-                setProgress(30)
+                setStatusMessage('Uploading file...')
+                setProgress(10)
 
                 const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/verify_audio`, {
                     method: 'POST',
@@ -266,12 +268,9 @@ export default function AudioAnalyzer() {
                     throw new Error(`API error: ${response.status}`)
                 }
 
-                const data: VerificationResult = await response.json()
-                setResult(data)
-                setProgress(100)
-                setStatusMessage('Complete!')
+                jobData = await response.json()
             } else {
-                // URL mode - use async processing with polling
+                // URL mode
                 setStatusMessage('Submitting job...')
 
                 const submitResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/verify_audio_async`, {
@@ -289,49 +288,56 @@ export default function AudioAnalyzer() {
                     throw new Error(`API error: ${submitResponse.status}`)
                 }
 
-                const jobData = await submitResponse.json()
+                jobData = await submitResponse.json()
+            }
 
-                // If cached, result is immediate
-                if (jobData.status === 'complete' && jobData.result) {
-                    setResult(jobData.result as VerificationResult)
+            // If cached/override hit, result is immediate
+            if (jobData.status === 'complete' && jobData.result) {
+                setResult(jobData.result as VerificationResult)
+                setProgress(100)
+                setStatusMessage('Complete! (from cache)')
+                return
+            }
+
+            // Poll for job status
+            if (!jobData.job_id) {
+                throw new Error('No job_id returned')
+            }
+
+            const jobId = jobData.job_id
+            let attempts = 0
+            const maxAttempts = 300 // 10 minutes max (2s intervals)
+
+            setStatusMessage('Processing...')
+            setProgress(20)
+
+            while (attempts < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, 2000))
+
+                const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/job/${jobId}`)
+                if (!statusResponse.ok) {
+                    throw new Error('Failed to get job status')
+                }
+
+                const status = await statusResponse.json()
+                setProgress(status.progress || Math.min(20 + attempts * 2, 90))
+                setStatusMessage(status.message || 'Processing...')
+
+                if (status.status === 'complete') {
+                    setResult(status.result as VerificationResult)
                     setProgress(100)
                     setStatusMessage('Complete!')
                     return
                 }
 
-                // Poll for job status
-                const jobId = jobData.job_id
-                let attempts = 0
-                const maxAttempts = 300 // 10 minutes max (2s intervals)
-
-                while (attempts < maxAttempts) {
-                    await new Promise(resolve => setTimeout(resolve, 2000))
-
-                    const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/job/${jobId}`)
-                    if (!statusResponse.ok) {
-                        throw new Error('Failed to get job status')
-                    }
-
-                    const status = await statusResponse.json()
-                    setProgress(status.progress || 0)
-                    setStatusMessage(status.message || 'Processing...')
-
-                    if (status.status === 'complete') {
-                        setResult(status.result as VerificationResult)
-                        setProgress(100)
-                        setStatusMessage('Complete!')
-                        return
-                    }
-
-                    if (status.status === 'failed') {
-                        throw new Error(status.error || 'Analysis failed')
-                    }
-
-                    attempts++
+                if (status.status === 'failed') {
+                    throw new Error(status.error || 'Analysis failed')
                 }
 
-                throw new Error('Job timed out')
+                attempts++
             }
+
+            throw new Error('Job timed out')
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Analysis failed')
             setProgress(0)
