@@ -44,7 +44,8 @@ async def consume():
                 continue
 
             if msg.error():
-                raise KafkaException(msg.error())
+                continue
+                # raise KafkaException(msg.error())
 
             try:
                 event = json.loads(msg.value().decode("utf-8"))
@@ -92,12 +93,14 @@ async def consume():
 
                     
                 else:
-                    logger.warning(f"Unknown gcs_tag={gcs_tag}")
-
+                    from logic.jobs import process_url_job
+                    logger.info(f"Processing URL audio_id={audio_id}")
+                    await process_url_job(job_id, audio_url, audio_id, client_policy)
+                   
                 logger.info(f"Finished audio_id={audio_id}")
 
                 # Commit ONLY after successful processing
-                consumer.commit(msg)
+                consumer.commit(msg) 
 
             except Exception as e:
                 logger.exception(f"Processing failed for audio_id={audio_id}")
