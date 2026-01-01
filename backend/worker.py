@@ -4,8 +4,15 @@ import logging
 import signal
 
 from confluent_kafka import Consumer, KafkaException
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
 from config import get_settings
 from logic import ai_engine
+import telemetry
+
+# Initialize OpenTelemetry before any processing
+telemetry.setup_telemetry()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,48 +63,59 @@ async def consume():
                 gcs_tag = event.get("gcs_tag")
                 client_policy = event.get("client_policy")
 
-                logger.info(f"Processing audio_id={audio_id}, job_id={job_id}")
+                # Extract trace context from Kafka headers
+                headers = {h[0]: h[1].decode() for h in (msg.headers() or [])}
+                propagator = TraceContextTextMapPropagator()
+                ctx = propagator.extract(headers)
 
-                if gcs_tag == "1":
-                    result = await ai_engine.analyze(
-                        gcs_uri=audio_url,
-                        audio_id=audio_id,
-                        client_policy=client_policy,
-                    )
-                    if hasattr(result, 'model_dump'):
-                        result_dict = result.model_dump(mode='json')
+                # Create span with parent context from the original request
+                tracer = telemetry.get_tracer()
+                with tracer.start_as_current_span("worker.process_audio", context=ctx) as span:
+                    span.set_attribute("audio_id", audio_id)
+                    span.set_attribute("job_id", job_id)
+                    span.set_attribute("gcs_tag", gcs_tag or "unknown")
+
+                    logger.info(f"Processing audio_id={audio_id}, job_id={job_id}")
+
+                    if gcs_tag == "1":
+                        result = await ai_engine.analyze(
+                            gcs_uri=audio_url,
+                            audio_id=audio_id,
+                            client_policy=client_policy,
+                        )
+                        if hasattr(result, 'model_dump'):
+                            result_dict = result.model_dump(mode='json')
+                        else:
+                            # Manually serialize datetime fields
+                            result_dict = {}
+                            for key, value in result.__dict__.items():
+                                if isinstance(value, datetime):
+                                    result_dict[key] = value.isoformat()
+                                elif hasattr(value, 'value'):  # Enum
+                                    result_dict[key] = value.value
+                                else:
+                                    result_dict[key] = value
+                        from logic.jobs import get_job_queue, JobStatus
+                        queue = get_job_queue()
+                        queue.update_job(
+                            job_id=job_id,
+                            status=JobStatus.COMPLETE,
+                            progress=100,
+                            message="Analysis complete!",
+                            result=result_dict,
+                            error=None
+                        )
+                        
+                        logger.info(f"Result: {result}")
+                        from logic.cache import set_cache
+                        set_cache(audio_id, result)
+
                     else:
-                        # Manually serialize datetime fields
-                        result_dict = {}
-                        for key, value in result.__dict__.items():
-                            if isinstance(value, datetime):
-                                result_dict[key] = value.isoformat()
-                            elif hasattr(value, 'value'):  # Enum
-                                result_dict[key] = value.value
-                            else:
-                                result_dict[key] = value
-                    from logic.jobs import get_job_queue, JobStatus
-                    queue= get_job_queue()
-                    queue.update_job(
-                        job_id=job_id,
-                        status= JobStatus.COMPLETE,
-                        progress= 100,
-                        message = "Analysis complete!",
-                        result = result_dict,
-                        error = None
-                    )
-                    
-                    logger.info(f"Result: {result}")
-                    from logic.cache import set_cache
-                    set_cache(audio_id, result)
-
-                    
-                else:
-                    from logic.jobs import process_url_job
-                    logger.info(f"Processing URL audio_id={audio_id}")
-                    await process_url_job(job_id, audio_url, audio_id, client_policy)
-                   
-                logger.info(f"Finished audio_id={audio_id}")
+                        from logic.jobs import process_url_job
+                        logger.info(f"Processing URL audio_id={audio_id}")
+                        await process_url_job(job_id, audio_url, audio_id, client_policy)
+                       
+                    logger.info(f"Finished audio_id={audio_id}")
 
                 # Commit ONLY after successful processing
                 consumer.commit(msg) 
