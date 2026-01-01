@@ -35,6 +35,7 @@ from config import get_settings
 from logic import overrides, cache, ai_engine
 import telemetry
 from confluent_kafka import Producer, Consumer
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 
 # Configure logging
@@ -304,6 +305,11 @@ async def verify_audio(
         # Send to Kafka for async processing
         producer = Producer(settings.kafka_producer)
 
+        # Inject trace context into Kafka headers
+        trace_headers = {}
+        propagator = TraceContextTextMapPropagator()
+        propagator.inject(trace_headers)
+
         producer.produce(
             topic="audio-verification-non-url",
             value=json.dumps({
@@ -313,6 +319,7 @@ async def verify_audio(
                 "job_id": job_id,
                 "gcs_tag": "1"
             }),
+            headers=[(k, v.encode()) for k, v in trace_headers.items()],
             callback=delivery_report
         )
         logger.info(f"Submitted job {job_id} to Kafka for processing")
@@ -365,6 +372,11 @@ async def verify_audio_async(request: AudioVerificationRequest):
     
     producer = Producer(settings.kafka_producer)
 
+    # Inject trace context into Kafka headers
+    trace_headers = {}
+    propagator = TraceContextTextMapPropagator()
+    propagator.inject(trace_headers)
+
     producer.produce(
             topic="audio-verification-non-url",
             value=json.dumps({
@@ -374,6 +386,7 @@ async def verify_audio_async(request: AudioVerificationRequest):
                 "job_id": job_id,
                 "gcs_tag": "0"
             }),
+            headers=[(k, v.encode()) for k, v in trace_headers.items()],
             callback=delivery_report
         )
     logger.info(f"Submitted job {job_id} to Kafka for processing")
