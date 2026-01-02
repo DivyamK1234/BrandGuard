@@ -281,7 +281,7 @@ Respond with a valid JSON object matching the required schema.
         raise
 
 
-async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str] = None) -> VerificationResult:
+async def analyze(gcs_uri: str, audio_id: str, client_policy: Optional[str] = None) -> VerificationResult:
     """
     Fast AI analysis pipeline using Gemini's native audio understanding.
     
@@ -303,7 +303,7 @@ async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str]
     
     with telemetry.SpanContext("gemini.analyze", {
         "audio_id": audio_id,
-        "audio_size_bytes": len(audio_data),
+        # "audio_size_bytes": len(audio_data),
         "has_client_policy": client_policy is not None
     }) as span:
         try:
@@ -311,10 +311,10 @@ async def analyze(audio_data: bytes, audio_id: str, client_policy: Optional[str]
             _init_vertex_ai()
             
             # Upload to GCS first (needed for Gemini to access)
-            with telemetry.SpanContext("gcs.upload", {"audio_id": audio_id}):
-                gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
-                if span:
-                    span.set_attribute("gcs_uri", gcs_uri)
+            # with telemetry.SpanContext("gcs.upload", {"audio_id": audio_id}):
+            #     gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
+            #     if span:
+            #         span.set_attribute("gcs_uri", gcs_uri)
         
             # Initialize Gemini model with audio capability
             model = GenerativeModel(
@@ -930,10 +930,17 @@ async def analyze_from_url_full(
                 audio_data = await response.read()
     
     update_progress(60, "Uploading to cloud...")
-    
+    with telemetry.SpanContext("gcs.upload", {
+            "audio_id": audio_id,
+            "audio_size_bytes": len(audio_data),
+            "has_client_policy": client_policy is not None
+    }) as span:
+        gcs_uri = await upload_audio_to_gcs(audio_data, audio_id)
+        if span:
+            span.set_attribute("gcs_uri", gcs_uri)
     # Run analysis
     update_progress(70, "Analyzing with AI...")
-    result = await analyze(audio_data, audio_id, client_policy)
+    result = await analyze(gcs_uri, audio_id, client_policy)
     
     update_progress(100, "Complete!")
     return result
