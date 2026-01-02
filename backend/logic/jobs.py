@@ -61,7 +61,7 @@ class JobQueue:
                 logger.info(f"Initialized job queue Redis client: {self.settings.redis_host}")
         return self._client
     
-    def create_job(self, audio_url: str, audio_id: Optional[str] = None) -> str:
+    def create_job(self, audio_url: Optional[str], audio_id: Optional[str] = None) -> str:
         """Create a new job and return job ID."""
         job_id = str(uuid.uuid4())[:12]
         
