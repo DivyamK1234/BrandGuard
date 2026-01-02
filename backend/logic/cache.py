@@ -122,7 +122,9 @@ def check_cache(audio_id: str) -> Optional[VerificationResult]:
                     source=VerificationSource.CACHE,  # Mark as from cache
                     confidence_score=data.get("confidence_score"),
                     unsafe_segments=data.get("unsafe_segments"),
+                    sensitive_segments=data.get("sensitive_segments"),
                     transcript_snippet=data.get("transcript_snippet"),
+                    content_summary=data.get("content_summary"),
                     created_at=data.get("created_at")
                 )
                 
@@ -203,7 +205,9 @@ def set_cache(audio_id: str, result: VerificationResult) -> bool:
                 "category_tags": result.category_tags,
                 "confidence_score": result.confidence_score,
                 "unsafe_segments": result.unsafe_segments,
+                "sensitive_segments": result.sensitive_segments,
                 "transcript_snippet": result.transcript_snippet,
+                "content_summary": result.content_summary,
                 "created_at": result.created_at.isoformat() if result.created_at else None
             }
             

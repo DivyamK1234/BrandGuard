@@ -1,6 +1,8 @@
 # BrandGuard CI/CD Pipeline
 # Deploys to GCP Cloud Run on push to main
 # Jaeger tracing runs on Compute Engine VM: 35.224.172.84
+# Kafka runs on Compute Engine VM: 34.57.190.110
+# Worker runs on Compute Engine VM: 136.115.189.215
 
 name: Deploy to GCP
 
@@ -11,14 +13,71 @@ on:
 env:
   PROJECT_ID: brandguard-481014
   REGION: us-central1
+  ZONE: us-central1-a
   BACKEND_SERVICE: brandguard-backend
   FRONTEND_SERVICE: brandguard-frontend
   JAEGER_VM_IP: 35.224.172.84
+  KAFKA_VM_IP: 34.57.190.110
+  WORKER_VM_IP: 136.115.189.215
   REGISTRY: us-central1-docker.pkg.dev
 
 jobs:
+  # ===========================================================================
+  # Start VMs (ensure they are running)
+  # ===========================================================================
+  start-vms:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Auth with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start Kafka VM
+        run: |
+          gcloud compute instances start kafka-vm --zone=${{ env.ZONE }} --project=${{ env.PROJECT_ID }} || true
+
+      - name: Start Worker VM
+        run: |
+          gcloud compute instances start worker-vm --zone=${{ env.ZONE }} --project=${{ env.PROJECT_ID }} || true
+
+      - name: Start Jaeger VM
+        run: |
+          gcloud compute instances start jaeger-vm --zone=${{ env.ZONE }} --project=${{ env.PROJECT_ID }} || true
+
+      - name: Wait for VMs to be ready
+        run: sleep 30
+
+      - name: Verify Kafka is accessible
+        run: |
+          echo "Checking Kafka at ${{ env.KAFKA_VM_IP }}:9092..."
+          timeout 30 bash -c 'until nc -z ${{ env.KAFKA_VM_IP }} 9092; do sleep 2; done' || echo "Kafka check timed out (may still be starting)"
+
+      - name: Verify Jaeger is accessible
+        run: |
+          echo "Checking Jaeger UI at ${{ env.JAEGER_VM_IP }}:16686..."
+          curl -sf --max-time 10 http://${{ env.JAEGER_VM_IP }}:16686/ > /dev/null && echo "✅ Jaeger UI is accessible" || echo "⚠️ Jaeger UI not responding yet"
+
+      - name: Verify Jaeger OTLP collector
+        run: |
+          echo "Checking Jaeger OTLP at ${{ env.JAEGER_VM_IP }}:4317..."
+          timeout 10 bash -c 'until nc -z ${{ env.JAEGER_VM_IP }} 4317; do sleep 1; done' && echo "✅ Jaeger OTLP is accessible" || echo "⚠️ Jaeger OTLP not responding yet"
+
+
+  # ===========================================================================
+  # Deploy Backend to Cloud Run
+  # ===========================================================================
   deploy-backend:
     runs-on: ubuntu-latest
+    needs: start-vms
     outputs:
       backend_url: ${{ steps.deploy.outputs.url }}
     
@@ -45,7 +104,9 @@ jobs:
         working-directory: backend
         run: |
           docker build -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/${{ env.BACKEND_SERVICE }}:${{ github.sha }} .
+          docker build -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/brandguard-worker:latest .
           docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/${{ env.BACKEND_SERVICE }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/brandguard-worker:latest
 
       - name: Deploy Backend to Cloud Run
         id: deploy
@@ -63,14 +124,56 @@ jobs:
             --set-env-vars="GCS_BUCKET_NAME=brandguard-audio-brandguard-481014" \
             --set-env-vars="VERTEX_AI_LOCATION=us-central1" \
             --set-env-vars="REDIS_URL=${{ secrets.REDIS_URL }}" \
+            --set-env-vars="KAFKA_ENDPOINTS=${{ env.KAFKA_VM_IP }}:9092" \
             --set-env-vars="OTEL_ENABLED=true" \
             --set-env-vars="OTEL_SERVICE_NAME=brandguard-backend" \
             --set-env-vars="OTEL_ENVIRONMENT=production" \
             --set-env-vars="OTEL_EXPORTER_ENDPOINT=http://${{ env.JAEGER_VM_IP }}:4317"
 
-  deploy-frontend:
+  # ===========================================================================
+  # Deploy Worker to VM
+  # ===========================================================================
+  deploy-worker-vm:
     runs-on: ubuntu-latest
     needs: deploy-backend
+    
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Auth with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Worker to VM
+        run: |
+          gcloud compute ssh worker-vm --zone=${{ env.ZONE }} --project=${{ env.PROJECT_ID }} --command="
+            docker-credential-gcr configure-docker --registries=us-central1-docker.pkg.dev &&
+            docker pull ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/brandguard-worker:latest &&
+            docker rm -f brandguard-worker || true &&
+            docker run -d --name brandguard-worker --restart=always --network=host \
+              -e GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }} \
+              -e GCS_BUCKET_NAME=brandguard-audio-brandguard-481014 \
+              -e VERTEX_AI_LOCATION=us-central1 \
+              -e REDIS_URL='${{ secrets.REDIS_URL }}' \
+              -e KAFKA_ENDPOINTS=${{ env.KAFKA_VM_IP }}:9092 \
+              -e OTEL_ENABLED=true \
+              -e OTEL_SERVICE_NAME=brandguard-worker \
+              -e OTEL_EXPORTER_ENDPOINT=http://${{ env.JAEGER_VM_IP }}:4317 \
+              ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/brandguard-worker:latest python worker.py
+          "
+
+  # ===========================================================================
+  # Deploy Frontend to Cloud Run
+  # ===========================================================================
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-worker-vm]
     
     permissions:
       contents: read
@@ -109,3 +212,4 @@ jobs:
             --port=3000 \
             --memory=512Mi \
             --cpu=1
+
