@@ -141,7 +141,7 @@ services:
 
     volumes:
       # Mount GCP credentials for local development
-      - ../cred.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       redis:
@@ -203,7 +203,7 @@ services:
 
     volumes:
       # Mount GCP credentials for local development
-      - ../cred.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       backend:
