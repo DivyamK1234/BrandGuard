@@ -133,26 +133,31 @@ class Settings(BaseSettings):
         default="http://jaeger:4317",
         description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
     )
-   
-    kafka_producer: Dict[str, Any] = Field(
-    default_factory=lambda: {
-        "bootstrap.servers": "kafka:9092",
-        "linger.ms": 10,
-        "acks": "all"
-    },
-    description="Kafka producer configuration"
-)
+    
+    # Kafka configuration
+    kafka_endpoints: str = Field(
+        default="kafka:9092",
+        description="Kafka bootstrap servers (comma-separated). Set via KAFKA_ENDPOINTS env var."
+    )
+    
+    @property
+    def kafka_producer(self) -> Dict[str, Any]:
+        return {
+            "bootstrap.servers": self.kafka_endpoints,
+            "linger.ms": 10,
+            "acks": "all"
+        }
+    
+    @property
+    def kafka_consumer(self) -> Dict[str, Any]:
+        return {
+            "bootstrap.servers": self.kafka_endpoints,
+            "group.id": "brandguard-workers",
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": True,
+            "auto.commit.interval.ms": 1000
+        }
 
-    kafka_consumer: Dict[str, Any] = Field(
-    default_factory=lambda: {
-        "bootstrap.servers": "kafka:9092",
-        "group.id": "brandguard-workers",
-        "auto.offset.reset": "earliest",
-        "enable.auto.commit": True,
-        "auto.commit.interval.ms": 1000
-    },
-    description="Kafka consumer configuration"
-)
 
 
 
