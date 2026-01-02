@@ -14,6 +14,7 @@ Also provides Admin API for manual override management (ADVERIFY-UI-1 S-2.1.3).
 import logging
 import time
 import uuid
+import json
 from datetime import datetime
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -33,6 +34,9 @@ from models import (
 from config import get_settings
 from logic import overrides, cache, ai_engine
 import telemetry
+from confluent_kafka import Producer, Consumer
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +97,14 @@ app.add_middleware(
 # =============================================================================
 # Middleware for request timing
 # =============================================================================
+def delivery_report(err, msg):
+    if err:
+        logger.error("Delivery failed:", err)
+    else:
+        logger.info(
+            f"Delivered to {msg.topic()} "
+            f"[partition={msg.partition()} offset={msg.offset()}]"
+        )
 
 @app.middleware("http")
 async def add_timing_and_telemetry(request: Request, call_next):
@@ -151,7 +163,7 @@ async def add_timing_and_telemetry(request: Request, call_next):
                 1,
                 {"method": request.method, "endpoint": request.url.path, "status": "500"}
             )
-        raise
+        raise e
 
 
 # =============================================================================
@@ -204,7 +216,7 @@ async def liveness_check():
 
 @app.post(
     "/api/v1/verify_audio",
-    response_model=VerificationResult,
+    # response_model=VerificationResult,
     tags=["Verification"],
     summary="Verify Audio for Brand Safety",
     description="""
@@ -248,7 +260,11 @@ async def verify_audio(
     if override_result:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"Override hit for {audio_id} (latency: {elapsed_ms:.2f}ms)")
-        return override_result
+        return {
+            "job_id": None,
+            "status": "complete",
+            "result": override_result.model_dump() if hasattr(override_result, 'model_dump') else override_result.__dict__
+        }
     
     # Step 2: Check Cache
     # Implements Logic S-1.1.3: Core Lookup Logic with in-memory cache
@@ -256,75 +272,71 @@ async def verify_audio(
     if cached_result:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"Cache hit for {audio_id} (latency: {elapsed_ms:.2f}ms)")
-        return cached_result
+        
+        return {
+            "job_id": None,
+            "status": "complete",
+            "result": cached_result.model_dump() if hasattr(cached_result, 'model_dump') else cached_result.__dict__
+        }
+        # return cached_result
     
     # Step 3: AI Analysis (cache miss)
     # Implements ADVERIFY-AI-1: AI Classification
     logger.info(f"Cache miss for {audio_id}, initiating AI analysis")
     
     try:
+        from logic.jobs import get_job_queue
+        queue = get_job_queue()
+        job_id = queue.create_job(audio_url=None, audio_id=audio_id)
+
         # Read audio file
         audio_data = await audio_file.read()
-        
-        # Run AI analysis pipeline
-        result = await ai_engine.analyze(audio_data, audio_id, client_policy)
-        
-        # Step 4: Cache the result
-        # Implements ADVERIFY-AI-3: Cache with 24h TTL
-        cache.set_cache(audio_id, result)
-        
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(f"AI analysis complete for {audio_id} (latency: {elapsed_ms:.2f}ms)")
-        
-        return result
+
+        # Upload to GCS with telemetry
+        with telemetry.SpanContext("gcs.upload", {
+            "audio_id": audio_id,
+            "audio_size_bytes": len(audio_data),
+            "has_client_policy": client_policy is not None
+        }) as span:
+            gcs_uri = await ai_engine.upload_audio_to_gcs(audio_data, audio_id)
+            if span:
+                span.set_attribute("gcs_uri", gcs_uri)
+
+        # Send to Kafka for async processing
+        producer = Producer(settings.kafka_producer)
+
+        # Inject trace context into Kafka headers
+        trace_headers = {}
+        propagator = TraceContextTextMapPropagator()
+        propagator.inject(trace_headers)
+
+        producer.produce(
+            topic="audio-verification-non-url",
+            value=json.dumps({
+                "audio_id": audio_id,
+                "audio_url": gcs_uri,
+                "client_policy": client_policy,
+                "job_id": job_id,
+                "gcs_tag": "1"
+            }),
+            headers=[(k, v.encode()) for k, v in trace_headers.items()],
+            callback=delivery_report
+        )
+        logger.info(f"Submitted job {job_id} to Kafka for processing")
+        producer.poll(0)
+        producer.flush()
+
+        return {
+            "job_id": job_id,
+            "status": "processing",
+            "message": "Job submitted. Poll /api/v1/job/{job_id} for status."
+        }
         
     except Exception as e:
         logger.error(f"Verification failed for {audio_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 
-@app.post(
-    "/api/v1/verify_audio_url",
-    response_model=VerificationResult,
-    tags=["Verification"],
-    summary="Verify Audio from URL"
-)
-async def verify_audio_from_url(request: AudioVerificationRequest):
-    """
-    Verify audio from a URL instead of file upload.
-    
-    Useful for processing audio that's already hosted.
-    """
-    if not request.audio_url:
-        raise HTTPException(status_code=400, detail="audio_url is required")
-    
-    # Check override first
-    override_result = overrides.check_override(request.audio_id)
-    if override_result:
-        return override_result
-    
-    # Check cache
-    cached_result = cache.check_cache(request.audio_id)
-    if cached_result:
-        return cached_result
-    
-    # AI analysis from URL
-    try:
-        result = await ai_engine.analyze_from_url(
-            request.audio_url,
-            request.audio_id,
-            request.client_policy
-        )
-        cache.set_cache(request.audio_id, result)
-        return result
-    except Exception as e:
-        logger.error(f"URL verification failed for {request.audio_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
-
-
-# =============================================================================
-# Async Job API (Background Processing)
-# =============================================================================
 
 @app.post(
     "/api/v1/verify_audio_async",
@@ -358,10 +370,36 @@ async def verify_audio_async(request: AudioVerificationRequest):
     queue = get_job_queue()
     job_id = queue.create_job(request.audio_url, request.audio_id)
     
+    producer = Producer(settings.kafka_producer)
+
+    # Inject trace context into Kafka headers
+    trace_headers = {}
+    propagator = TraceContextTextMapPropagator()
+    propagator.inject(trace_headers)
+
+    producer.produce(
+            topic="audio-verification-non-url",
+            value=json.dumps({
+                "audio_id": request.audio_id,
+                "audio_url": request.audio_url,
+                "client_policy": request.client_policy,
+                "job_id": job_id,
+                "gcs_tag": "0"
+            }),
+            headers=[(k, v.encode()) for k, v in trace_headers.items()],
+            callback=delivery_report
+        )
+    logger.info(f"Submitted job {job_id} to Kafka for processing")
+    producer.poll(0)
+    producer.flush()
+
+
     # Start background task
-    asyncio.create_task(
-        process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
-    )
+    # asyncio.create_task(
+    #     process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
+    # )
+
+    # logger.info(f"Submitted job {job_id} to url processor")
     
     return {
         "job_id": job_id,

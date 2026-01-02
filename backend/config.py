@@ -9,7 +9,7 @@ Reference: ADVERIFY-BE-3 - Production deployment configuration
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Optional
+from typing import Optional, Dict, Any
 from functools import lru_cache
 
 
@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     
     # Google Cloud Platform Settings
     google_cloud_project: str = Field(
-        ...,
+        default= "test",
         description="GCP Project ID"
     )
     gcs_bucket_name: str = Field(
-        ...,
+        default="test",
         description="GCS bucket for audio file storage"
     )
     
@@ -133,6 +133,35 @@ class Settings(BaseSettings):
         default="http://jaeger:4317",
         description="OTLP exporter endpoint (Jaeger, Cloud Trace collector, etc.)"
     )
+    
+    # Kafka configuration
+    kafka_endpoints: str = Field(
+        default="kafka:9092",
+        description="Kafka bootstrap servers (comma-separated). Set via KAFKA_ENDPOINTS env var."
+    )
+    
+    @property
+    def kafka_producer(self) -> Dict[str, Any]:
+        return {
+            "bootstrap.servers": self.kafka_endpoints,
+            "linger.ms": 10,
+            "acks": "all"
+        }
+    
+    @property
+    def kafka_consumer(self) -> Dict[str, Any]:
+        return {
+            "bootstrap.servers": self.kafka_endpoints,
+            "group.id": "brandguard-workers",
+            "auto.offset.reset": "earliest",
+            "enable.auto.commit": True,
+            "auto.commit.interval.ms": 1000
+        }
+
+
+
+
+
 
     class Config:
         env_file = ".env"
