@@ -42,9 +42,9 @@ services:
     image: jaegertracing/all-in-one:1.53
     container_name: brandguard-jaeger
     ports:
-      - "16686:16686"  # Jaeger UI
-      - "4317:4317"    # OTLP gRPC receiver
-      - "4318:4318"    # OTLP HTTP receiver
+      - "0.0.0.0:16686:16686" # Jaeger UI
+      - "0.0.0.0:4317:4317" # OTLP gRPC receiver
+      - "0.0.0.0:4318:4318" # OTLP HTTP receiver
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
@@ -52,6 +52,46 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - brandguard-network
+
+  # ===========================================================================
+  # Kafka - Message Queue for Async Processing
+  # Reference: Event-driven architecture for background job processing
+  # ===========================================================================
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: brandguard-kafka
+    ports:
+      - "9092:9092"   # External access (localhost)
+      - "9094:9094"   # Dev Container access (host.docker.internal)
+    environment:
+      # KRaft mode configuration
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092,DEV://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092,DEV://host.docker.internal:9094
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,DEV:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Cluster settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Log retention
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     networks:
       - brandguard-network
 
@@ -92,8 +132,11 @@ services:
       - OTEL_SERVICE_NAME=brandguard-backend
       - OTEL_SERVICE_VERSION=1.0.0
       - OTEL_ENVIRONMENT=development
-      - OTEL_EXPORTER_ENDPOINT=http://jaeger:S4317
-      
+      - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
+
+      # Kafka Configuration
+      - KAFKA_ENDPOINTS=kafka:29092
+
       # CORS
       - CORS_ORIGINS=["http://localhost:3000"]
       
@@ -111,6 +154,65 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - brandguard-network
+
+  # ===========================================================================
+  # Worker - Kafka Consumer for Background Processing
+  # Reference: Async audio verification processing
+  # ===========================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: brandguard-worker
+    command: ["python", "worker.py"]
+    environment:
+      # Application
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+
+      # Redis (ADVERIFY-BE-1)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_TTL_SECONDS=86400
+
+      # GCP Settings
+      - GOOGLE_CLOUD_PROJECT=brandguard-481014
+      - GCS_BUCKET_NAME=brandguard-audio-brandguard-481014
+      - VERTEX_AI_LOCATION=us-central1
+      - GEMINI_MODEL=gemini-2.0-flash-001
+      - GEMINI_MODEL=gemini-2.0-flash-001
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/service-account.json
+
+      # Firestore (ADVERIFY-UI-1)
+      - FIRESTORE_COLLECTION_OVERRIDES=audio_overrides
+      - FIRESTORE_COLLECTION_RESULTS=verification_results
+
+      # OpenTelemetry Configuration
+      - OTEL_ENABLED=true
+      - OTEL_SERVICE_NAME=brandguard-worker
+      - OTEL_SERVICE_VERSION=1.0.0
+      - OTEL_ENVIRONMENT=development
+      - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
+
+      # Kafka Configuration
+      - KAFKA_ENDPOINTS=kafka:29092
+
+    volumes:
+      # Mount GCP credentials for local development
+      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: on-failure
     networks:
       - brandguard-network
 

@@ -4,4 +4,48 @@ python = "3.11"
 
 [settings]
 asdf_compat = true
-activate_auto = true
+
+
+# =============================================================================
+# BRANDGUARD TASKS
+# =============================================================================
+
+[tasks."setup"]
+description = "Full project setup (Installs + Docker)"
+run = [
+    "npm install -g pnpm",
+    "cd frontend && npm install",
+    "cd backend && pip install -r requirements.txt",
+    "docker-compose up -d kafka redis jaeger"
+]
+
+[tasks."dev"]
+description = "Start everything (Backend + Frontend + Worker)"
+depends = ["infra"]
+
+run = "mise run backend & mise run frontend & mise run worker"
+
+[tasks."backend"]
+description = "Start the FastAPI Backend"
+dir = "backend"
+run = "uvicorn main:app --reload --port 8000"
+
+[tasks."frontend"]
+description = "Start the Next.js Frontend"
+dir = "frontend"
+run = "npm run dev"
+
+[tasks."worker"]
+description = "Start the Kafka Worker"
+dir = "backend"
+run = "python worker.py"
+
+[tasks."infra"]
+description = "Start infrastructure (Kafka, Redis, Jaeger)"
+run = "docker-compose up -d kafka redis jaeger"
+
+
+[tasks."down"]
+description = "Stop all infrastructure"
+run = "docker-compose down"
+

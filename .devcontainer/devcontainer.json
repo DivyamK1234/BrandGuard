@@ -4,6 +4,20 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "enableNonRootDocker": true
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true
+    }
+
+
+
+
+  },
   "customizations": {
     "vscode": {
       "extensions": [
@@ -11,20 +25,37 @@
         "ms-vscode.vscode-typescript-next",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "jdx.mise"
-      ]
+        "jdx.mise",
+        "confluentinc.vscode-confluent",
+        "ms-azuretools.vscode-docker",
+        "googlecloudtools.cloudcode"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.local/share/mise/shims/python",
+        "python.terminal.activateEnvironment": true
+      }
     }
   },
   "remoteUser": "vscode",
-  "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
-  ],
-  "forwardPorts": [3000, 8000, 16686, 6379, 4317, 4318],
+  "forwardPorts": [8000, 3000, 9092, 16686, 6379, 8080, 4317],
   "portsAttributes": {
-    "3000": { "label": "Frontend Dashboard" },
-    "8000": { "label": "Backend API" },
-    "16686": { "label": "Jaeger UI" },
-    "6379": { "label": "Redis" }
+    "3000": { "label": "Frontend (Next.js)", "onAutoForward": "notify" },
+    "8000": { "label": "Backend (FastAPI)", "onAutoForward": "notify" },
+    "9092": { "label": "Kafka Broker", "onAutoForward": "ignore" },
+    "16686": { "label": "Jaeger UI", "onAutoForward": "notify" },
+    "6379": { "label": "Redis Cache", "onAutoForward": "ignore" },
+    "8080": { "label": "Worker Health", "onAutoForward": "ignore" },
+    "4317": { "label": "OTLP gRPC", "onAutoForward": "ignore" }
   },
-  "postCreateCommand": "sudo chmod 666 /var/run/docker.sock && mise install && npm install -g pnpm && (cd frontend && npm install) && (cd backend && pip install -r requirements.txt)"
+  "containerEnv": {
+    "KAFKA_ENDPOINTS": "host.docker.internal:9094",
+    "REDIS_HOST": "host.docker.internal",
+    "REDIS_PORT": "6379",
+    "OTEL_EXPORTER_ENDPOINT": "http://host.docker.internal:4317"
+  },
+  "postCreateCommand": "/home/vscode/.local/bin/mise run setup"
 }
+
+
+
+
