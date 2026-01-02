@@ -23,6 +23,9 @@ redis==5.0.1
 # HTTP client for URL fetching
 aiohttp==3.9.1
 
+# Kafka for async message processing
+confluent-kafka==2.3.0
+
 # YouTube audio extraction
 yt-dlp>=2024.1.0
 
