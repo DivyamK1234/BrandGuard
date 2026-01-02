@@ -1,7 +1,11 @@
 import asyncio
 import json
 import logging
+import os
 import signal
+import threading
+from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from confluent_kafka import Consumer, KafkaException
 from opentelemetry import trace
@@ -21,6 +25,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 running = True
+
+
+# Health check handler for Cloud Run
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/" or self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK - Worker is running")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        pass  # Suppress HTTP logs
+
+
+def start_health_server():
+    """Start HTTP server for Cloud Run health checks."""
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Health check server started on port {port}")
+    server.serve_forever()
 
 
 def shutdown(sig, frame):
@@ -130,4 +158,10 @@ async def consume():
 
 
 if __name__ == "__main__":
+    # Start health check server in background thread (for Cloud Run)
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+    
+    # Run Kafka consumer
     asyncio.run(consume())
+
