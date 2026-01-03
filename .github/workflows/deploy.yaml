@@ -189,11 +189,13 @@ jobs:
               -e VERTEX_AI_LOCATION=us-central1 \
               -e REDIS_URL='${{ secrets.REDIS_URL }}' \
               -e KAFKA_ENDPOINTS=${{ env.KAFKA_VM_IP }}:9092 \
+              -e PROXY_URL='${{ secrets.PROXY_URL }}' \
               -e OTEL_ENABLED=true \
               -e OTEL_SERVICE_NAME=brandguard-worker \
               -e OTEL_EXPORTER_ENDPOINT=http://${{ env.JAEGER_VM_IP }}:4317 \
               ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/brandguard/brandguard-worker:latest python worker.py
           "
+
 
   # ===========================================================================
   # Deploy Frontend to Cloud Run
