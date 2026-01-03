@@ -671,6 +671,10 @@ async def extract_audio_from_platform(url: str, audio_id: str) -> bytes:
         output_template = os.path.join(temp_dir, f"{audio_id}.%(ext)s")
         
         # yt-dlp options for audio extraction
+        # Get proxy from settings for YouTube downloads (Bright Data residential proxy)
+        from config import get_settings
+        settings = get_settings()
+        
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
             'outtmpl': output_template,
@@ -690,6 +694,12 @@ async def extract_audio_from_platform(url: str, audio_id: str) -> bytes:
             'external_downloader': 'ffmpeg',
             'external_downloader_args': {'ffmpeg_i': ['-t', '300']},
         }
+        
+        # Add residential proxy if configured (for YouTube bot detection bypass)
+        if settings.proxy_url:
+            ydl_opts['proxy'] = settings.proxy_url
+            logger.info(f"Using residential proxy for download")
+
         
         def download():
             import yt_dlp

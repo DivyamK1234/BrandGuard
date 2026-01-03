@@ -140,6 +140,13 @@ class Settings(BaseSettings):
         description="Kafka bootstrap servers (comma-separated). Set via KAFKA_ENDPOINTS env var."
     )
     
+    # Proxy Configuration (for YouTube/external downloads)
+    proxy_url: Optional[str] = Field(
+        default=None,
+        description="Residential proxy URL for YouTube downloads (Bright Data). Format: http://user:pass@host:port"
+    )
+
+    
     @property
     def kafka_producer(self) -> Dict[str, Any]:
         return {
