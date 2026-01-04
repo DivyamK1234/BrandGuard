@@ -7,15 +7,16 @@
 
 ## 🎯 Overview
 
-BrandGuard is a production-grade microservice that analyzes audio content for brand safety classification. It uses **Google Cloud's Vertex AI (Gemini 3.0)** for intelligent content analysis and provides real-time classifications for ad-tech platforms.
+BrandGuard is a production-grade microservice that analyzes audio content for brand safety classification. It uses **Google Cloud's Vertex AI (Gemini 2.0)** for intelligent content analysis and provides real-time classifications for ad-tech platforms.
 
 ### Key Features
 
-- **AI-Powered Classification**: Gemini 3.0 Pro analyzes audio transcripts for brand safety
-- **Ultra-Low Latency**: Cache-first architecture with <5ms cached lookups
-- **Manual Overrides**: Admin console for instant classification overrides
-- **Visual Analysis**: Waveform visualization with unsafe segment highlighting
-- **Production Ready**: Docker, Cloud Run, GitHub Actions CI/CD
+- **AI-Powered Classification**: Gemini 2.0 Pro analyzes audio transcripts for brand safety.
+- **Ultra-Low Latency**: Cache-first architecture with <5ms cached lookups.
+- **Manual Overrides**: Admin console for instant classification overrides.
+- **Visual Analysis**: Waveform visualization with unsafe segment highlighting.
+- **Production Ready**: Docker, Cloud Run, GitHub Actions CI/CD.
+- **Fully Instrumented**: OpenTelemetry tracing with Jaeger integration.
 
 ## 🏗 Architecture
 
@@ -38,11 +39,11 @@ BrandGuard is a production-grade microservice that analyzes audio content for br
 
 1. **Override Check** → Firestore manual overrides (highest priority)
 2. **Cache Check** → Redis with 24h TTL (<5ms target)
-3. **AI Analysis** → Gemini 3.0 classification (fallback)
+3. **AI Analysis** → Gemini classification (fallback)
 
 ## 📁 Project Structure
 
-```
+```bash
 BrandGuard/
 ├── backend/                  # FastAPI Backend
 │   ├── logic/
@@ -52,6 +53,7 @@ BrandGuard/
 │   ├── models.py            # Pydantic data models
 │   ├── config.py            # Configuration & prompts
 │   ├── main.py              # FastAPI application
+│   ├── worker.py            # Kafka background worker
 │   ├── Dockerfile           # Production container
 │   └── requirements.txt     # Python dependencies
 │
@@ -66,174 +68,105 @@ BrandGuard/
 │   ├── Dockerfile           # Production container
 │   └── package.json         # Node dependencies
 │
-├── .github/
-│   └── workflows/
-│       └── deploy.yaml      # Cloud Run CI/CD (ADVERIFY-BE-3)
-│
-├── docker-compose.yaml      # Local development
+├── .devcontainer/            # VS Code Dev Container environment
+├── .mise.toml                # Project tool management & tasks
+├── docker-compose.yaml      # Local infrastructure (Redis, Kafka, Jaeger)
 └── .env.example             # Environment template
 ```
 
-## 🚀 Quick Start
+## 🚀 Development Setup
 
-### Prerequisites
+We support two primary development workflows: **Local with Mise** or **VS Code Dev Containers**. Both use `mise` to ensure tool consistency across the team.
 
+### 1. Prerequisites
 - Docker & Docker Compose
-- Google Cloud Project with:
-  - Firestore (Native mode)
-  - Cloud Storage bucket
-  - Speech-to-Text API enabled
-  - Vertex AI API enabled
-- Node.js 20+ (for frontend development)
-- Python 3.11+ (for backend development)
+- [Mise](https://mise.jdx.dev/) installed on your host (if not using Dev Containers).
+- Google Cloud Project with Vertex AI and Firestore enabled.
 
-### Local Development
+### 2. Initial Configuration
+1. **Clone the repo:**
+   ```bash
+   git clone https://github.com/YOUR_ORG/brandguard.git
+   cd brandguard
+   ```
+2. **GCP Credentials:** Place your service account JSON at:
+   `./brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json`
 
-1. **Clone and configure**
+---
 
-```bash
-git clone https://github.com/YOUR_ORG/brandguard.git
-cd brandguard
-cp .env.example .env
-# Edit .env with your GCP project details
-```
+### Workflow A: Dev Container (Recommended)
+This is the most "isolated" way to develop. It spins up a container with Python, Node, and all CLI tools pre-installed.
 
-2. **Authenticate with GCP**
+1. Open the project in VS Code.
+2. Click **"Reopen in Container"** when the notification appears.
+3. The environment will automatically run `mise run setup` to install dependencies and start infrastructure.
 
-```bash
-gcloud auth application-default login
-```
+### Workflow B: Local with Mise
+If you prefer developing on your host machine:
 
-3. **Start services**
+1. **Install tools & dependencies:**
+   ```bash
+   mise install        # Installs Python 3.11/Node 20 automatically
+   mise run setup      # Installs FE/BE deps and starts Redis/Kafka/Jaeger
+   ```
+2. **Run the full stack:**
+   ```bash
+   mise run dev        # Starts Backend, Worker, and Frontend in parallel
+   ```
 
-```bash
-docker-compose up -d
-```
+---
 
-4. **Access the dashboard**
+## 🔧 Unified Task Management (`mise`)
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+We use `mise` to manage common tasks across both local and container environments.
 
-## 🧰 Dev Container & Mise-en-Place (Recommended)
+| Task | Command | Description |
+| :--- | :--- | :--- |
+| **Setup** | `mise run setup` | One-time setup: installs FE/BE deps and starts infra. |
+| **Infra** | `mise run infra` | Starts only the Docker services (Redis, Kafka, Jaeger). |
+| **Dev** | `mise run dev` | Runs all services (Backend + Frontend + Worker) in parallel. |
+| **Backend** | `mise run backend` | Starts the FastAPI backend with hot-reload. |
+| **Frontend** | `mise run frontend` | Starts the Next.js dev server. |
+| **Down** | `mise run down` | Stops and removes all local infrastructure containers. |
 
-You can develop inside a reproducible Dev Container (VS Code Remote - Containers) that uses the project's Docker Compose services.
-
-1. Install prerequisites: Docker Desktop (WSL2 on Windows) and the VS Code **Remote - Containers** extension.
-2. Run the helper to prepare local credentials and `.env` (cross-platform):
-
-PowerShell (Windows):
-
-```powershell
-.\.devcontainer\mise-en-place.ps1
-```
-
-Bash (macOS / Linux / WSL):
-
-```bash
-./.devcontainer/mise-en-place.sh
-```
-
-3. Open the repository in VS Code and choose _Remote-Containers: Open Folder in Container..._.
-
-What the helper scripts do:
-
-- Prompt to copy your GCP service-account JSON into the repo root (local dev only — do NOT commit it).
-- Create a `.env` with sensible local defaults.
-- Optionally start `docker compose up --build -d` for you.
-
-Security note: the helper copies credentials into the repo root for convenience. The repository's `.gitignore` already prevents committing service-account JSON files and `.env` files, but double-check before committing. Never push real service-account JSON to public repos.
-
-If you prefer not to use VS Code dev containers, the scripts can still create `.env` and start the compose stack for local testing.
-
-### Development Without Docker
-
-**Backend:**
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
-```
-
-**Frontend:**
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
+---
 
 ## 📡 API Reference
 
 ### Verify Audio
-
-```http
-POST /api/v1/verify_audio
-Content-Type: multipart/form-data
-
-audio_file: <file>
-audio_id: optional_custom_id
-client_policy: optional_policy_rules
-```
+`POST /api/v1/verify_audio` (multipart/form-data)
 
 **Response:**
-
 ```json
 {
   "audio_id": "audio_12345",
   "brand_safety_score": "RISK_MEDIUM",
   "fraud_flag": false,
   "category_tags": ["news", "politics"],
-  "source": "AI_GENERATED",
   "confidence_score": 0.87,
-  "unsafe_segments": [
-    { "start": 12.5, "end": 18.3, "reason": "controversial_topic" }
-  ],
-  "transcript_snippet": "...discussing the heated debate..."
+  "unsafe_segments": [{ "start": 12.5, "end": 18.3, "reason": "topic" }]
 }
-```
-
-### Override Management
-
-```http
-GET    /api/v1/admin/override          # List overrides
-POST   /api/v1/admin/override          # Create override
-PUT    /api/v1/admin/override/{id}     # Update override
-DELETE /api/v1/admin/override/{id}     # Delete override
-```
-
-### Health Checks
-
-```http
-GET /health        # Full health status
-GET /health/ready  # Kubernetes readiness probe
-GET /health/live   # Kubernetes liveness probe
 ```
 
 ## 🔧 Configuration
 
-| Variable               | Description          | Default              |
-| ---------------------- | -------------------- | -------------------- |
-| `GOOGLE_CLOUD_PROJECT` | GCP Project ID       | required             |
-| `GCS_BUCKET_NAME`      | Audio storage bucket | required             |
-| `REDIS_HOST`           | Redis hostname       | localhost            |
-| `REDIS_PORT`           | Redis port           | 6379                 |
-| `CACHE_TTL_SECONDS`    | Cache TTL (24h)      | 86400                |
-| `GEMINI_MODEL`         | Vertex AI model      | gemini-2.0-flash-001 |
-| `VERTEX_AI_LOCATION`   | Vertex AI region     | us-central1          |
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `GOOGLE_CLOUD_PROJECT` | GCP Project ID | required |
+| `GCS_BUCKET_NAME` | Audio storage bucket | required |
+| `REDIS_HOST` | Redis hostname | localhost |
+| `REDIS_PORT` | Redis port | 6379 |
+| `GEMINI_MODEL` | Vertex AI model | gemini-2.0-flash-001 |
+| `OTEL_EXPORTER_ENDPOINT`| OTLP Trace Collector | host.docker.internal:4318 |
 
 ## 📊 Architecture Mapping
 
-| AdDomain Story | BrandGuard Implementation                          |
-| -------------- | -------------------------------------------------- |
-| ADVERIFY-BE-1  | `logic/cache.py` - Redis caching with <20ms target |
-| ADVERIFY-AI-1  | `logic/ai_engine.py` - Gemini classification       |
-| ADVERIFY-UI-1  | `logic/overrides.py` + Admin Console               |
-| ADVERIFY-BE-3  | `.github/workflows/deploy.yaml`                    |
+| AdDomain Story | BrandGuard Implementation |
+| :--- | :--- |
+| **ADVERIFY-BE-1** | `logic/cache.py` - Redis caching with <5ms target |
+| **ADVERIFY-AI-1** | `logic/ai_engine.py` - Gemini classification |
+| **ADVERIFY-UI-1** | `logic/overrides.py` + Admin Console |
+| **ADVERIFY-BE-3** | `.github/workflows/deploy.yaml` - Cloud Run CI/CD |
 
 ## 🧪 Testing
 
@@ -242,16 +175,14 @@ GET /health/live   # Kubernetes liveness probe
 cd backend
 pytest tests/ -v --cov=.
 
-# Frontend type check
+# Frontend quality checks
 cd frontend
-npm run type-check
 npm run lint
+npm run type-check
 ```
 
 ## 📜 License
-
 Proprietary - BrandGuard Project
 
 ---
-
 Built with ❤️ using FastAPI, Next.js, and Vertex AI
