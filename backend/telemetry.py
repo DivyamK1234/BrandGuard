@@ -1,39 +1,37 @@
 """
 BrandGuard Telemetry Module
 
-OpenTelemetry-based observability for distributed tracing, metrics, and logging.
-Supports Jaeger (local) and OTLP-compatible backends (GCP Cloud Trace via collector).
-
-Reference: Production-grade observability best practices
+OpenTelemetry-based observability for distributed tracing and metrics.
+Dynamically supports both OTLP/gRPC (Production) and OTLP/HTTP (Local Dev).
 """
 
 import logging
 import os
-from functools import lru_cache
-from typing import Optional
+from typing import Dict, Optional, Any
 
 from opentelemetry import trace, metrics
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.trace import Status, StatusCode, Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
+from config import get_settings
+
 logger = logging.getLogger(__name__)
 
-# Global instances
+
 _tracer: Optional[trace.Tracer] = None
-_meter: Optional[metrics.Meter] = None
 _initialized: bool = False
 
-# Metrics instruments (initialized in setup_telemetry)
+
 request_counter: Optional[metrics.Counter] = None
 request_duration: Optional[metrics.Histogram] = None
 cache_hit_counter: Optional[metrics.Counter] = None
@@ -43,229 +41,161 @@ gemini_error_counter: Optional[metrics.Counter] = None
 job_counter: Optional[metrics.Counter] = None
 
 
-def get_resource() -> Resource:
-    """Create OpenTelemetry resource with service metadata."""
-    from config import get_settings
-    settings = get_settings()
+def setup_telemetry() -> None:
     
-    return Resource.create({
+    global _initialized, _tracer
+    if _initialized:
+        return
+    
+    settings = get_settings()
+    if not settings.otel_enabled:
+        _initialized = True
+        return
+
+    # 1. Resource Metadata
+    resource = Resource.create({
         SERVICE_NAME: os.environ.get("OTEL_SERVICE_NAME", settings.otel_service_name),
         SERVICE_VERSION: settings.otel_service_version,
         "deployment.environment": settings.otel_environment,
     })
-
-
-def setup_telemetry() -> None:
-    """
-    Initialize OpenTelemetry tracing, metrics, and logging instrumentation.
-    
-    Should be called once during application startup (in lifespan handler).
-    Configures exporters based on environment variables for flexibility.
-    """
-    global _tracer, _meter, _initialized
-    global request_counter, request_duration
-    global cache_hit_counter, cache_miss_counter
-    global gemini_duration, gemini_error_counter, job_counter
-    
-    if _initialized:
-        logger.warning("Telemetry already initialized, skipping...")
-        return
-    
-    from config import get_settings
-    settings = get_settings()
-    
-    if not settings.otel_enabled:
-        logger.info("OpenTelemetry disabled via configuration")
-        _initialized = True
-        return
-    
-    resource = get_resource()
     service_name = str(resource.attributes.get(SERVICE_NAME))
-    logger.info(f"Initializing OpenTelemetry for service: {service_name}")
-    logger.info(f"Exporter endpoint: {settings.otel_exporter_endpoint}")
     
-    # ==========================================================================
-    # Tracing Setup
-    # ==========================================================================
-    tracer_provider = TracerProvider(resource=resource)
-    
-    # Configure OTLP HTTP exporter (more stable in Docker-on-Windows)
+    # Determine Protocol (grpc vs http)
+    # Default to grpc, but allow override via env var
+    protocol = os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
     endpoint = settings.otel_exporter_endpoint
-    if not endpoint.startswith("http"):
-        endpoint = f"http://{endpoint}"
     
-    # Ensure we use 4318 for HTTP if it was 4317 (gRPC)
-    if ":4317" in endpoint:
-        endpoint = endpoint.replace(":4317", ":4318")
-        if "/v1/traces" not in endpoint:
-            endpoint = f"{endpoint}/v1/traces"
+    logger.info(f"Initializing Telemetry for [{service_name}] via [{protocol}]")
 
-    logger.info(f"Configuring OTLP HTTP exporter with endpoint: {endpoint}")
     
-    otlp_exporter = OTLPSpanExporter(
-        endpoint=endpoint,
-        timeout=10 # Increase timeout to 10s to avoid DEADLINE_EXCEEDED
-    )
+    _setup_tracing(resource, endpoint, protocol, settings.otel_service_version)
     
-    tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-    trace.set_tracer_provider(tracer_provider)
     
-    _tracer = trace.get_tracer(
-        service_name,
-        settings.otel_service_version
-    )
-    
-    # ==========================================================================
-    # Metrics Setup
-    # ==========================================================================
-    # Jaeger (default setup) does not support OTLP metrics. 
-    # Only enable metrics if specifically configured or if not using jaeger port.
-    enable_metrics = settings.otel_enabled and ":4318" not in endpoint and ":4317" not in endpoint
-    
-    if enable_metrics:
-        metric_endpoint = endpoint.replace("/v1/traces", "/v1/metrics") if "/v1/traces" in endpoint else endpoint
-        
-        try:
-            metric_exporter = OTLPMetricExporter(endpoint=metric_endpoint)
-            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
-            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-            metrics.set_meter_provider(meter_provider)
-            _meter = metrics.get_meter(service_name, settings.otel_service_version)
-            
-            # Create metric instruments
-            request_counter = _meter.create_counter("http.requests.total", description="Total HTTP requests", unit="1")
-            request_duration = _meter.create_histogram("http.request.duration", description="HTTP request duration (ms)", unit="ms")
-            cache_hit_counter = _meter.create_counter("cache.hits.total", description="Total cache hits", unit="1")
-            cache_miss_counter = _meter.create_counter("cache.misses.total", description="Total cache misses", unit="1")
-            gemini_duration = _meter.create_histogram("gemini.api.duration", description="Gemini API duration (ms)", unit="ms")
-            gemini_error_counter = _meter.create_counter("gemini.api.errors.total", description="Total Gemini errors", unit="1")
-            job_counter = _meter.create_counter("jobs.processed.total", description="Total background jobs", unit="1")
-            
-            logger.info("Metrics initialization complete")
-        except Exception as e:
-            logger.warning(f"Failed to initialize metrics: {e}")
+    if not (":4317" in endpoint or ":4318" in endpoint):
+        _setup_metrics(resource, endpoint, protocol)
     else:
-        logger.info("Metrics export disabled (standard Jaeger doesn't support metrics)")
-        # Initialize default meter anyway so code calls don't fail
-        _meter = metrics.get_meter(service_name, settings.otel_service_version)
-    
-    # ==========================================================================
-    # Auto-instrumentation
-    # ==========================================================================
-    # Redis instrumentation (auto-traces all Redis operations)
+        logger.info("Metrics export suppressed (standard Jaeger endpoint detected).")
+
     RedisInstrumentor().instrument()
-    
-    # Logging instrumentation (adds trace context to logs)
-    LoggingInstrumentor().instrument(
-        set_logging_format=True,
-        log_level=logging.INFO
-    )
-    
+    LoggingInstrumentor().instrument(set_logging_format=True, log_level=logging.INFO)
+
     _initialized = True
-    logger.info("OpenTelemetry initialization complete")
+    logger.info("OpenTelemetry initialization complete.")
+
+
+def _setup_tracing(resource: Resource, endpoint: str, protocol: str, version: str) -> None:
+    """Configures tracing based on the selected protocol."""
+    global _tracer
+    provider = TracerProvider(resource=resource)
+    
+    if protocol == "grpc":
+        # Production Standard: OTLP over gRPC
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        # gRPC doesn't use the http:// prefix
+        sanitized_endpoint = endpoint.replace("http://", "").replace("https://", "")
+        exporter = OTLPSpanExporter(endpoint=sanitized_endpoint, insecure=True)
+        logger.info(f"Using OTLP/gRPC exporter -> {sanitized_endpoint}")
+    else:
+        # Dev Stability: OTLP over HTTP
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        if not endpoint.startswith("http"):
+            endpoint = f"http://{endpoint}"
+            
+        # for Windows Dev Container bridge
+        if ":4317" in endpoint:
+            endpoint = endpoint.replace(":4317", ":4318")
+        if not endpoint.endswith("/v1/traces"):
+            endpoint = endpoint.rstrip("/") + "/v1/traces"
+        exporter = OTLPSpanExporter(endpoint=endpoint, timeout=10)
+        logger.info(f"Using OTLP/HTTP exporter -> {endpoint}")
+
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    _tracer = trace.get_tracer(str(resource.attributes.get(SERVICE_NAME)), version)
+
+
+def _setup_metrics(resource: Resource, endpoint: str, protocol: str) -> None:
+    """Initializes global metric instruments."""
+    global request_counter, request_duration, cache_hit_counter
+    global cache_miss_counter, gemini_duration, gemini_error_counter, job_counter
+
+    try:
+        if protocol == "grpc":
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+            sanitized_endpoint = endpoint.replace("http://", "").replace("https://", "")
+            exporter = OTLPMetricExporter(endpoint=sanitized_endpoint, insecure=True)
+        else:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+            metric_endpoint = endpoint.replace("/v1/traces", "/v1/metrics")
+            exporter = OTLPMetricExporter(endpoint=metric_endpoint)
+
+        reader = PeriodicExportingMetricReader(exporter, export_interval_millis=60000)
+        provider = MeterProvider(resource=resource, metric_readers=[reader])
+        metrics.set_meter_provider(provider)
+        
+        meter = metrics.get_meter("brandguard.metrics")
+        
+        # Initialize 
+        request_counter = meter.create_counter("http.requests.total", "1", "Total HTTP requests")
+        request_duration = meter.create_histogram("http.request.duration", "ms", "Request duration")
+        cache_hit_counter = meter.create_counter("cache.hits.total", "1", "Total cache hits")
+        cache_miss_counter = meter.create_counter("cache.misses.total", "1", "Total cache misses")
+        gemini_duration = meter.create_histogram("gemini.api.duration", "ms", "Gemini API latency")
+        gemini_error_counter = meter.create_counter("gemini.api.errors.total", "1", "Gemini failures")
+        job_counter = meter.create_counter("jobs.processed.total", "1", "Total background jobs")
+
+    except Exception as e:
+        logger.warning(f"Metrics initialization failed: {e}")
 
 
 def instrument_fastapi(app) -> None:
-    """
-    Instrument FastAPI application with OpenTelemetry.
-    
-    Should be called after app creation and setup_telemetry().
-    """
-    from config import get_settings
-    settings = get_settings()
-    
-    if not settings.otel_enabled:
-        return
-    
-    FastAPIInstrumentor.instrument_app(
-        app,
-        excluded_urls="health,health/live,health/ready"  # Don't trace health checks
-    )
-    logger.info("FastAPI instrumentation complete")
+    """Instrument FastAPI if OpenTelemetry is enabled."""
+    if get_settings().otel_enabled:
+        FastAPIInstrumentor.instrument_app(app, excluded_urls="health,health/live,health/ready")
 
 
-def get_tracer() -> Optional[trace.Tracer]:
-    """Get the configured tracer for manual instrumentation."""
-    return _tracer
+# Public API Utilities
 
+def get_tracer() -> trace.Tracer:
+    return _tracer if _tracer else trace.get_tracer("brandguard.noop")
 
-def get_meter() -> Optional[metrics.Meter]:
-    """Get the configured meter for custom metrics."""
-    return _meter
+def get_current_trace_id() -> str:
+    sc = trace.get_current_span().get_span_context()
+    return format(sc.trace_id, '032x') if sc.is_valid else ""
 
-
-def get_current_trace_id() -> Optional[str]:
-    """Get the current trace ID for log correlation."""
-    span = trace.get_current_span()
-    if span and span.get_span_context().is_valid:
-        return format(span.get_span_context().trace_id, '032x')
-    return None
-
-
-def get_current_span_id() -> Optional[str]:
-    """Get the current span ID for log correlation."""
-    span = trace.get_current_span()
-    if span and span.get_span_context().is_valid:
-        return format(span.get_span_context().span_id, '016x')
-    return None
-
-
-def add_span_attributes(attributes: dict) -> None:
-    """Add attributes to the current span."""
+def add_span_attributes(attrs: Dict[str, Any]) -> None:
     span = trace.get_current_span()
     if span:
-        for key, value in attributes.items():
-            span.set_attribute(key, value)
+        for k, v in attrs.items():
+            if v is not None:
+                span.set_attribute(k, v)
 
-
-def record_exception(exception: Exception) -> None:
-    """Record an exception on the current span."""
+def record_exception(exc: Exception) -> None:
     span = trace.get_current_span()
     if span:
-        span.record_exception(exception)
-        span.set_status(Status(StatusCode.ERROR, str(exception)))
+        span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, str(exc)))
 
 
 class SpanContext:
-    """
-    Context manager for creating spans with automatic error handling.
-    """
-    def __init__(self, name: str, attributes: Optional[dict] = None):
-        self.name = name
-        self.attributes = attributes or {}
-        self.span: Optional[Span] = None
-        self._context_manager = None
+    """Convenience context manager for manual spans."""
+    def __init__(self, name: str, attrs: Optional[Dict[str, Any]] = None):
+        self.name, self.attrs = name, attrs or {}
+        self._mgr = None
     
-    def __enter__(self) -> Optional[Span]:
-        tracer = get_tracer()
-        if tracer:
-            self._context_manager = tracer.start_as_current_span(self.name)
-            self.span = self._context_manager.__enter__()
-            for key, value in self.attributes.items():
-                if value is not None:
-                    self.span.set_attribute(key, value)
-            return self.span
-        return None
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._context_manager:
-            if exc_val and self.span:
-                self.span.record_exception(exc_val)
-                self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
-            elif self.span:
-                self.span.set_status(Status(StatusCode.OK))
-            self._context_manager.__exit__(exc_type, exc_val, exc_tb)
-        return False
+    def __enter__(self):
+        self._mgr = get_tracer().start_as_current_span(self.name)
+        span = self._mgr.__enter__()
+        add_span_attributes(self.attrs)
+        return span
+
+    def __exit__(self, et, ev, tb):
+        if ev:
+            record_exception(ev)
+        return self._mgr.__exit__(et, ev, tb)
 
 
 def shutdown_telemetry() -> None:
-    """Gracefully shutdown telemetry exporters."""
-    tracer_provider = trace.get_tracer_provider()
-    if hasattr(tracer_provider, 'shutdown'):
-        tracer_provider.shutdown()
-    
-    meter_provider = metrics.get_meter_provider()
-    if hasattr(meter_provider, 'shutdown'):
-        meter_provider.shutdown()
-    
-    logger.info("OpenTelemetry shutdown complete")
+    """Gracefully flushes all telemetry data."""
+    trace.get_tracer_provider().shutdown()
+    metrics.get_meter_provider().shutdown()
