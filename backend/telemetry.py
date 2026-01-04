@@ -18,8 +18,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
@@ -49,10 +49,9 @@ def get_resource() -> Resource:
     settings = get_settings()
     
     return Resource.create({
-        SERVICE_NAME: settings.otel_service_name,
+        SERVICE_NAME: os.environ.get("OTEL_SERVICE_NAME", settings.otel_service_name),
         SERVICE_VERSION: settings.otel_service_version,
         "deployment.environment": settings.otel_environment,
-        "service.namespace": "brandguard",
     })
 
 
@@ -80,96 +79,75 @@ def setup_telemetry() -> None:
         _initialized = True
         return
     
-    logger.info(f"Initializing OpenTelemetry for service: {settings.otel_service_name}")
-    logger.info(f"Exporter endpoint: {settings.otel_exporter_endpoint}")
-    
     resource = get_resource()
+    service_name = str(resource.attributes.get(SERVICE_NAME))
+    logger.info(f"Initializing OpenTelemetry for service: {service_name}")
+    logger.info(f"Exporter endpoint: {settings.otel_exporter_endpoint}")
     
     # ==========================================================================
     # Tracing Setup
     # ==========================================================================
     tracer_provider = TracerProvider(resource=resource)
     
-    # Configure OTLP exporter (works with Jaeger, Cloud Trace collector, etc.)
+    # Configure OTLP HTTP exporter (more stable in Docker-on-Windows)
+    endpoint = settings.otel_exporter_endpoint
+    if not endpoint.startswith("http"):
+        endpoint = f"http://{endpoint}"
+    
+    # Ensure we use 4318 for HTTP if it was 4317 (gRPC)
+    if ":4317" in endpoint:
+        endpoint = endpoint.replace(":4317", ":4318")
+        if "/v1/traces" not in endpoint:
+            endpoint = f"{endpoint}/v1/traces"
+
+    logger.info(f"Configuring OTLP HTTP exporter with endpoint: {endpoint}")
+    
     otlp_exporter = OTLPSpanExporter(
-        endpoint=settings.otel_exporter_endpoint,
-        insecure=not settings.otel_exporter_endpoint.startswith("https")
+        endpoint=endpoint,
+        timeout=10 # Increase timeout to 10s to avoid DEADLINE_EXCEEDED
     )
     
     tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
     trace.set_tracer_provider(tracer_provider)
     
     _tracer = trace.get_tracer(
-        settings.otel_service_name,
+        service_name,
         settings.otel_service_version
     )
     
     # ==========================================================================
     # Metrics Setup
     # ==========================================================================
-    metric_exporter = OTLPMetricExporter(
-        endpoint=settings.otel_exporter_endpoint,
-        insecure=not settings.otel_exporter_endpoint.startswith("https")
-    )
+    # Jaeger (default setup) does not support OTLP metrics. 
+    # Only enable metrics if specifically configured or if not using jaeger port.
+    enable_metrics = settings.otel_enabled and ":4318" not in endpoint and ":4317" not in endpoint
     
-    metric_reader = PeriodicExportingMetricReader(
-        metric_exporter,
-        export_interval_millis=60000  # Export every 60 seconds
-    )
-    
-    meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[metric_reader]
-    )
-    metrics.set_meter_provider(meter_provider)
-    
-    _meter = metrics.get_meter(
-        settings.otel_service_name,
-        settings.otel_service_version
-    )
-    
-    # Create metric instruments
-    request_counter = _meter.create_counter(
-        "http.requests.total",
-        description="Total HTTP requests",
-        unit="1"
-    )
-    
-    request_duration = _meter.create_histogram(
-        "http.request.duration",
-        description="HTTP request duration in milliseconds",
-        unit="ms"
-    )
-    
-    cache_hit_counter = _meter.create_counter(
-        "cache.hits.total",
-        description="Total cache hits",
-        unit="1"
-    )
-    
-    cache_miss_counter = _meter.create_counter(
-        "cache.misses.total",
-        description="Total cache misses",
-        unit="1"
-    )
-    
-    gemini_duration = _meter.create_histogram(
-        "gemini.api.duration",
-        description="Gemini API call duration in milliseconds",
-        unit="ms"
-    )
-    
-    gemini_error_counter = _meter.create_counter(
-        "gemini.api.errors.total",
-        description="Total Gemini API errors",
-        unit="1"
-    )
-    
-    job_counter = _meter.create_counter(
-        "jobs.processed.total",
-        description="Total background jobs processed",
-        unit="1"
-    )
+    if enable_metrics:
+        metric_endpoint = endpoint.replace("/v1/traces", "/v1/metrics") if "/v1/traces" in endpoint else endpoint
+        
+        try:
+            metric_exporter = OTLPMetricExporter(endpoint=metric_endpoint)
+            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+            metrics.set_meter_provider(meter_provider)
+            _meter = metrics.get_meter(service_name, settings.otel_service_version)
+            
+            # Create metric instruments
+            request_counter = _meter.create_counter("http.requests.total", description="Total HTTP requests", unit="1")
+            request_duration = _meter.create_histogram("http.request.duration", description="HTTP request duration (ms)", unit="ms")
+            cache_hit_counter = _meter.create_counter("cache.hits.total", description="Total cache hits", unit="1")
+            cache_miss_counter = _meter.create_counter("cache.misses.total", description="Total cache misses", unit="1")
+            gemini_duration = _meter.create_histogram("gemini.api.duration", description="Gemini API duration (ms)", unit="ms")
+            gemini_error_counter = _meter.create_counter("gemini.api.errors.total", description="Total Gemini errors", unit="1")
+            job_counter = _meter.create_counter("jobs.processed.total", description="Total background jobs", unit="1")
+            
+            logger.info("Metrics initialization complete")
+        except Exception as e:
+            logger.warning(f"Failed to initialize metrics: {e}")
+    else:
+        logger.info("Metrics export disabled (standard Jaeger doesn't support metrics)")
+        # Initialize default meter anyway so code calls don't fail
+        _meter = metrics.get_meter(service_name, settings.otel_service_version)
     
     # ==========================================================================
     # Auto-instrumentation
@@ -251,14 +229,7 @@ def record_exception(exception: Exception) -> None:
 class SpanContext:
     """
     Context manager for creating spans with automatic error handling.
-    
-    Usage:
-        with SpanContext("operation_name", {"key": "value"}) as span:
-            # do work
-            if span:
-                span.set_attribute("result", "success")
     """
-    
     def __init__(self, name: str, attributes: Optional[dict] = None):
         self.name = name
         self.attributes = attributes or {}
@@ -268,11 +239,10 @@ class SpanContext:
     def __enter__(self) -> Optional[Span]:
         tracer = get_tracer()
         if tracer:
-            # Use start_as_current_span which properly manages the context
             self._context_manager = tracer.start_as_current_span(self.name)
             self.span = self._context_manager.__enter__()
             for key, value in self.attributes.items():
-                if value is not None:  # Skip None values
+                if value is not None:
                     self.span.set_attribute(key, value)
             return self.span
         return None
@@ -284,17 +254,12 @@ class SpanContext:
                 self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
             elif self.span:
                 self.span.set_status(Status(StatusCode.OK))
-            # Let the context manager handle span ending
             self._context_manager.__exit__(exc_type, exc_val, exc_tb)
         return False
 
 
 def shutdown_telemetry() -> None:
-    """
-    Gracefully shutdown telemetry exporters.
-    
-    Should be called during application shutdown.
-    """
+    """Gracefully shutdown telemetry exporters."""
     tracer_provider = trace.get_tracer_provider()
     if hasattr(tracer_provider, 'shutdown'):
         tracer_provider.shutdown()

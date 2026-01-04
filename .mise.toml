@@ -1,51 +1,63 @@
+# =============================================================================
+# TOOL VERSIONS
+# =============================================================================
 [tools]
-node = "20"
+node   = "20"
 python = "3.11"
 
+# =============================================================================
+# ENVIRONMENT VARIABLES (SINGLE SOURCE OF TRUTH)
+# =============================================================================
+[env]
+GOOGLE_APPLICATION_CREDENTIALS = "{{config_root}}/brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json"
+GOOGLE_CLOUD_PROJECT          = "brandguard-481014"
+GCS_BUCKET_NAME               = "brandguard-audio-brandguard-481014"
+
+# OpenTelemetry (Dev Container → Host Jaeger)
+OTEL_EXPORTER_ENDPOINT = "host.docker.internal:4317"
+OTEL_SERVICE_NAME           = "brandguard-app"
+
+# Infra (Dev Container → Host Services)
+REDIS_HOST      = "host.docker.internal"
+REDIS_PORT      = "6379"
+KAFKA_ENDPOINTS = "host.docker.internal:9094"
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
 [settings]
 asdf_compat = true
-
 
 # =============================================================================
 # BRANDGUARD TASKS
 # =============================================================================
 
-[tasks."setup"]
-description = "Full project setup (Installs + Docker)"
+[tasks.setup]
 run = [
-    "npm install -g pnpm",
-    "cd frontend && npm install",
-    "cd backend && pip install -r requirements.txt",
-    "docker-compose up -d kafka redis jaeger"
+  "npm install -g pnpm",
+  "cd frontend && npm install",
+  "cd backend && pip install -r requirements.txt",
+  "docker compose up -d kafka redis jaeger"
 ]
 
-[tasks."dev"]
-description = "Start everything (Backend + Frontend + Worker)"
-depends = ["infra"]
+[tasks.infra]
+run = "docker compose up -d kafka redis jaeger"
 
+[tasks.dev]
+depends = ["infra"]
 run = "mise run backend & mise run frontend & mise run worker"
 
-[tasks."backend"]
-description = "Start the FastAPI Backend"
+[tasks.backend]
 dir = "backend"
-run = "uvicorn main:app --reload --port 8000"
+run = "OTEL_SERVICE_NAME=brandguard-backend uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 
-[tasks."frontend"]
-description = "Start the Next.js Frontend"
+[tasks.worker]
+dir = "backend"
+run = "OTEL_SERVICE_NAME=brandguard-worker python worker.py"
+
+[tasks.frontend]
 dir = "frontend"
 run = "npm run dev"
 
-[tasks."worker"]
-description = "Start the Kafka Worker"
-dir = "backend"
-run = "python worker.py"
-
-[tasks."infra"]
-description = "Start infrastructure (Kafka, Redis, Jaeger)"
-run = "docker-compose up -d kafka redis jaeger"
-
-
-[tasks."down"]
-description = "Stop all infrastructure"
-run = "docker-compose down"
-
+[tasks.down]
+run = "docker compose down"

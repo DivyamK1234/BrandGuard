@@ -11,7 +11,7 @@
 # Note: GCP services (Firestore, GCS, Speech-to-Text, Vertex AI) require
 # authentication via GOOGLE_APPLICATION_CREDENTIALS or ADC.
 
-version: '3.8'
+
 
 services:
   # ===========================================================================
@@ -26,34 +26,54 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - brandguard-network
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - brandguard-network
 
   # ===========================================================================
   # Jaeger - Distributed Tracing
   # Reference: OpenTelemetry traces exported here for visualization
   # ===========================================================================
+  # jaeger:
+  #   image: jaegertracing/all-in-one:1.53
+  #   container_name: brandguard-jaeger
+  #   ports:
+  #     - "16686:16686" # Jaeger UI
+  #     - "4317:4317" # OTLP gRPC receiver
+  #     - "4318:4318" # OTLP HTTP receiver
+  #   environment:
+  #     - COLLECTOR_OTLP_ENABLED=true
+  #   healthcheck:
+  #     test: [ "CMD", "wget", "--spider", "-q", "http://localhost:16686" ]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+
   jaeger:
-    image: jaegertracing/all-in-one:1.53
+    image: jaegertracing/all-in-one:1.55
     container_name: brandguard-jaeger
     ports:
-      - "0.0.0.0:16686:16686" # Jaeger UI
-      - "0.0.0.0:4317:4317" # OTLP gRPC receiver
-      - "0.0.0.0:4318:4318" # OTLP HTTP receiver
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    command:
+      - "--collector.otlp.enabled=true"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:16686" ]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - brandguard-network
+
 
   # ===========================================================================
   # Kafka - Message Queue for Async Processing
@@ -143,7 +163,7 @@ services:
 
     volumes:
       # Mount GCP credentials for local development
-      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       redis:
@@ -205,7 +225,7 @@ services:
 
     volumes:
       # Mount GCP credentials for local development
-      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       backend:

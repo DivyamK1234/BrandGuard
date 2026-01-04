@@ -43,19 +43,19 @@
     "8000": { "label": "Backend (FastAPI)", "onAutoForward": "notify" },
     "9092": { "label": "Kafka Broker", "onAutoForward": "ignore" },
     "16686": { "label": "Jaeger UI", "onAutoForward": "notify" },
-    "6379": { "label": "Redis Cache", "onAutoForward": "ignore" },
+    "6379": { "label": "Redis Cache", "onAutoForward": "notify" },
     "8080": { "label": "Worker Health", "onAutoForward": "ignore" },
-    "4317": { "label": "OTLP gRPC", "onAutoForward": "ignore" }
+    "4317": { "label": "OTLP gRPC", "onAutoForward": "notify" }
   },
   "containerEnv": {
     "KAFKA_ENDPOINTS": "host.docker.internal:9094",
     "REDIS_HOST": "host.docker.internal",
     "REDIS_PORT": "6379",
-    "OTEL_EXPORTER_ENDPOINT": "http://host.docker.internal:4317"
+    "OTEL_EXPORTER_ENDPOINT": "host.docker.internal:4317",
+    "GOOGLE_APPLICATION_CREDENTIALS": "/workspaces/BrandGuard/brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json"
   },
-  "postCreateCommand": "/home/vscode/.local/bin/mise run setup"
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "postCreateCommand": "mise run setup"
 }
-
-
-
-
