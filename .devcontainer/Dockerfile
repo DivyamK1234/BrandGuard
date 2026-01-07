@@ -39,8 +39,8 @@ WORKDIR /home/vscode
 # Install mise as the vscode user
 RUN curl https://mise.jdx.dev/install.sh | sh
 
-# Add mise to the path for the vscode user
-ENV PATH="/home/vscode/.local/share/mise/shims:$PATH"
+# Add mise and its shims to the path for the vscode user
+ENV PATH="/home/vscode/.local/bin:/home/vscode/.local/share/mise/shims:$PATH"
 
 # Set up shell activation (using absolute paths for reliability)
 RUN echo 'eval "$(/home/vscode/.local/bin/mise activate bash)"' >> ~/.bashrc

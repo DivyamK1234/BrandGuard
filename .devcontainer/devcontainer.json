@@ -57,5 +57,5 @@
   "runArgs": [
     "--add-host=host.docker.internal:host-gateway"
   ],
-  "postCreateCommand": "mise run setup"
+  "postCreateCommand": "/home/vscode/.local/bin/mise run setup"
 }
