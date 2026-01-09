@@ -62,8 +62,8 @@ def get_redis_client() -> redis.Redis:
                 db=settings.redis_db,
                 decode_responses=True,
                 max_connections=50,
-                socket_timeout=0.1,  # 100ms timeout for fast fail
-                socket_connect_timeout=0.1,
+                socket_timeout=1.0,  # 1s timeout (better for Windows networking)
+                socket_connect_timeout=1.0,
                 retry_on_timeout=True
             )
             

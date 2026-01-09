@@ -1,0 +1,64 @@
+# =============================================================================
+# TOOL VERSIONS
+# =============================================================================
+[tools]
+node   = "20"
+python = "3.11"
+
+# =============================================================================
+# ENVIRONMENT VARIABLES (SINGLE SOURCE OF TRUTH)
+# =============================================================================
+[env]
+GOOGLE_APPLICATION_CREDENTIALS = "{{config_root}}/brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json"
+GOOGLE_CLOUD_PROJECT          = "brandguard-481014"
+GCS_BUCKET_NAME               = "brandguard-audio-brandguard-481014"
+
+# OpenTelemetry (Dev Container → Host Jaeger)
+OTEL_EXPORTER_ENDPOINT = "host.docker.internal:4318"
+OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
+OTEL_SERVICE_NAME           = "brandguard-app"
+
+# Infra (Dev Container → Host Services)
+REDIS_HOST      = "host.docker.internal"
+REDIS_PORT      = "6379"
+KAFKA_ENDPOINTS = "host.docker.internal:9094"
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
+[settings]
+asdf_compat = true
+
+# =============================================================================
+# BRANDGUARD TASKS
+# =============================================================================
+
+[tasks.setup]
+run = [
+  "npm install -g pnpm",
+  "cd frontend && npm install",
+  "cd backend && pip install -r requirements.txt",
+  "docker compose up -d kafka redis jaeger"
+]
+
+[tasks.infra]
+run = "docker compose up -d kafka redis jaeger"
+
+[tasks.dev]
+depends = ["infra"]
+run = "mise run backend & mise run frontend & mise run worker"
+
+[tasks.backend]
+dir = "backend"
+run = "OTEL_SERVICE_NAME=brandguard-backend uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+
+[tasks.worker]
+dir = "backend"
+run = "OTEL_SERVICE_NAME=brandguard-worker python worker.py"
+
+[tasks.frontend]
+dir = "frontend"
+run = "npm run dev"
+
+[tasks.down]
+run = "docker compose down"
