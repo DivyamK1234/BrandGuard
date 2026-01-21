@@ -32,7 +32,7 @@ from models import (
     BrandSafetyScore
 )
 from config import get_settings
-from logic import overrides, cache, ai_engine, analytics
+from logic import overrides, cache, ai_engine
 import telemetry
 from confluent_kafka import Producer, Consumer
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -61,9 +61,6 @@ async def lifespan(app: FastAPI):
     
     # Initialize OpenTelemetry
     telemetry.setup_telemetry()
-    
-    # Initialize Analytics DB
-    analytics.init_analytics_db()
     
     yield
     
@@ -108,28 +105,6 @@ def delivery_report(err, msg):
             f"Delivered to {msg.topic()} "
             f"[partition={msg.partition()} offset={msg.offset()}]"
         )
-
-
-def get_request_metadata(request: Request) -> dict:
-    """
-    Extract client metadata from a FastAPI Request.
-    
-    Returns:
-        Dict with ip_address and user_agent
-    """
-    # Get client IP (handle proxies)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        ip_address = forwarded_for.split(",")[0].strip()
-    else:
-        ip_address = request.client.host if request.client else None
-    
-    user_agent = request.headers.get("User-Agent")
-    
-    return {
-        "ip_address": ip_address,
-        "user_agent": user_agent,
-    }
 
 @app.middleware("http")
 async def add_timing_and_telemetry(request: Request, call_next):
@@ -256,7 +231,6 @@ async def liveness_check():
     """
 )
 async def verify_audio(
-    request: Request,
     audio_file: UploadFile = File(..., description="MP3 audio file to analyze"),
     audio_id: Optional[str] = Form(None, description="Optional custom audio ID"),
     client_policy: Optional[str] = Form(None, description="Optional client-specific policy")
@@ -273,8 +247,6 @@ async def verify_audio(
     Returns: VerificationResult JSON
     """
     start_time = time.perf_counter()
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    request_meta = get_request_metadata(request)
     
     # Generate audio_id if not provided
     if not audio_id:
@@ -353,21 +325,6 @@ async def verify_audio(
         logger.info(f"Submitted job {job_id} to Kafka for processing")
         producer.poll(0)
         producer.flush()
-        
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        
-        # Log analytics (non-blocking background)
-        analytics.log_request_background(
-            request_id=request_id,
-            audio_id=audio_id,
-            ip_address=request_meta["ip_address"],
-            user_agent=request_meta["user_agent"],
-            uploaded_url=gcs_uri,
-            gemini_prompt=None,  # Prompt happens in worker
-            gemini_response=None,
-            response_status="success",
-            latency_ms=elapsed_ms,
-        )
 
         return {
             "job_id": job_id,
@@ -376,20 +333,6 @@ async def verify_audio(
         }
         
     except Exception as e:
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        
-        # Log error analytics (non-blocking)
-        analytics.log_request_background(
-            request_id=request_id,
-            audio_id=audio_id,
-            ip_address=request_meta["ip_address"],
-            user_agent=request_meta["user_agent"],
-            uploaded_url=None,
-            response_status="error",
-            error_message=str(e),
-            latency_ms=elapsed_ms,
-        )
-        
         logger.error(f"Verification failed for {audio_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
@@ -401,7 +344,7 @@ async def verify_audio(
     summary="Submit URL for Background Analysis",
     description="Submit a URL for background processing. Returns a job ID to poll for status."
 )
-async def verify_audio_async(http_request: Request, body: AudioVerificationRequest):
+async def verify_audio_async(request: AudioVerificationRequest):
     """
     Submit a URL for background analysis.
     
@@ -411,15 +354,11 @@ async def verify_audio_async(http_request: Request, body: AudioVerificationReque
     from logic.jobs import get_job_queue, process_url_job
     import asyncio
     
-    start_time = time.perf_counter()
-    request_id = http_request.headers.get("X-Request-ID", str(uuid.uuid4()))
-    request_meta = get_request_metadata(http_request)
-    
-    if not body.audio_url:
+    if not request.audio_url:
         raise HTTPException(status_code=400, detail="audio_url is required")
     
     # Check cache first - if cached, return immediately
-    cached_result = cache.check_cache(body.audio_id)
+    cached_result = cache.check_cache(request.audio_id)
     if cached_result:
         return {
             "job_id": None,
@@ -429,7 +368,7 @@ async def verify_audio_async(http_request: Request, body: AudioVerificationReque
     
     # Create job
     queue = get_job_queue()
-    job_id = queue.create_job(body.audio_url, body.audio_id)
+    job_id = queue.create_job(request.audio_url, request.audio_id)
     
     producer = Producer(settings.kafka_producer)
 
@@ -441,9 +380,9 @@ async def verify_audio_async(http_request: Request, body: AudioVerificationReque
     producer.produce(
             topic="audio-verification-non-url",
             value=json.dumps({
-                "audio_id": body.audio_id,
-                "audio_url": body.audio_url,
-                "client_policy": body.client_policy,
+                "audio_id": request.audio_id,
+                "audio_url": request.audio_url,
+                "client_policy": request.client_policy,
                 "job_id": job_id,
                 "gcs_tag": "0"
             }),
@@ -453,21 +392,14 @@ async def verify_audio_async(http_request: Request, body: AudioVerificationReque
     logger.info(f"Submitted job {job_id} to Kafka for processing")
     producer.poll(0)
     producer.flush()
-    
-    elapsed_ms = (time.perf_counter() - start_time) * 1000
-    
-    # Log analytics (non-blocking background)
-    analytics.log_request_background(
-        request_id=request_id,
-        audio_id=body.audio_id,
-        ip_address=request_meta["ip_address"],
-        user_agent=request_meta["user_agent"],
-        uploaded_url=body.audio_url,
-        gemini_prompt=None,  # Prompt happens in worker
-        gemini_response=None,
-        response_status="success",
-        latency_ms=elapsed_ms,
-    )
+
+
+    # Start background task
+    # asyncio.create_task(
+    #     process_url_job(job_id, request.audio_url, request.audio_id, request.client_policy)
+    # )
+
+    # logger.info(f"Submitted job {job_id} to url processor")
     
     return {
         "job_id": job_id,
