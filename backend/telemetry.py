@@ -16,15 +16,17 @@ from opentelemetry import trace, metrics
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+# from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+# from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.trace import Status, StatusCode, Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
 
 logger = logging.getLogger(__name__)
 
@@ -107,26 +109,20 @@ def setup_telemetry() -> None:
     # ==========================================================================
     # Metrics Setup
     # ==========================================================================
-    metric_exporter = OTLPMetricExporter(
-        endpoint=settings.otel_exporter_endpoint,
-        insecure=not settings.otel_exporter_endpoint.startswith("https")
-    )
-    
-    metric_reader = PeriodicExportingMetricReader(
-        metric_exporter,
-        export_interval_millis=60000  # Export every 60 seconds
-    )
-    
+    metric_reader = PrometheusMetricReader()
+
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[metric_reader]
     )
+
     metrics.set_meter_provider(meter_provider)
-    
+
     _meter = metrics.get_meter(
         settings.otel_service_name,
         settings.otel_service_version
     )
+
     
     # Create metric instruments
     request_counter = _meter.create_counter(
@@ -170,7 +166,7 @@ def setup_telemetry() -> None:
         description="Total background jobs processed",
         unit="1"
     )
-    
+    # ==========================================================================
     # ==========================================================================
     # Auto-instrumentation
     # ==========================================================================
