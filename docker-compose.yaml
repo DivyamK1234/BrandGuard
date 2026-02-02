@@ -11,7 +11,7 @@
 # Note: GCP services (Firestore, GCS, Speech-to-Text, Vertex AI) require
 # authentication via GOOGLE_APPLICATION_CREDENTIALS or ADC.
 
-version: '3.8'
+
 
 services:
   # ===========================================================================
@@ -26,34 +26,54 @@ services:
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - brandguard-network
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - brandguard-network
 
   # ===========================================================================
   # Jaeger - Distributed Tracing
   # Reference: OpenTelemetry traces exported here for visualization
   # ===========================================================================
+  # jaeger:
+  #   image: jaegertracing/all-in-one:1.53
+  #   container_name: brandguard-jaeger
+  #   ports:
+  #     - "16686:16686" # Jaeger UI
+  #     - "4317:4317" # OTLP gRPC receiver
+  #     - "4318:4318" # OTLP HTTP receiver
+  #   environment:
+  #     - COLLECTOR_OTLP_ENABLED=true
+  #   healthcheck:
+  #     test: [ "CMD", "wget", "--spider", "-q", "http://localhost:16686" ]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+
   jaeger:
-    image: jaegertracing/all-in-one:1.53
+    image: jaegertracing/all-in-one:1.55
     container_name: brandguard-jaeger
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC receiver
-      - "4318:4318" # OTLP HTTP receiver
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    command:
+      - "--collector.otlp.enabled=true"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:16686" ]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
       - brandguard-network
+
 
   # ===========================================================================
   # Kafka - Message Queue for Async Processing
@@ -64,18 +84,20 @@ services:
     container_name: brandguard-kafka
     ports:
       - "9092:9092"   # External access (localhost)
+      - "9094:9094"   # Dev Container access (host.docker.internal)
     environment:
       # KRaft mode configuration
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092,DEV://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092,DEV://host.docker.internal:9094
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,DEV:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       # Cluster settings
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
@@ -134,14 +156,14 @@ services:
       - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
 
       # Kafka Configuration
-      - KAFKA_ENDPOINTS=kafka:9092
+      - KAFKA_ENDPOINTS=kafka:29092
 
       # CORS
       - CORS_ORIGINS=["http://localhost:3000"]
 
     volumes:
       # Mount GCP credentials for local development
-      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       redis:
@@ -151,7 +173,7 @@ services:
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]     
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -199,11 +221,11 @@ services:
       - OTEL_EXPORTER_ENDPOINT=http://jaeger:4317
 
       # Kafka Configuration
-      - KAFKA_ENDPOINTS=kafka:9092
+      - KAFKA_ENDPOINTS=kafka:29092
 
     volumes:
       # Mount GCP credentials for local development
-      - ./brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
+      - ./brandguard-481014-b6b02cb2d900.json/brandguard-481014-b6b02cb2d900.json:/secrets/service-account.json:ro
       - ./backend:/app
     depends_on:
       backend:
@@ -234,6 +256,7 @@ services:
     environment:
       - BACKEND_URL=http://backend:8000
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - HOSTNAME=0.0.0.0
     depends_on:
       - backend
     networks:
